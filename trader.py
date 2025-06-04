@@ -43,7 +43,7 @@ class Trader:
             'OK-ACCESS-KEY': self.api_key or "",
             'OK-ACCESS-SIGN': self._generate_signature(timestamp, method, request_path, body),
             'OK-ACCESS-TIMESTAMP': timestamp,
-            'OK-ACCESS-PASSPHRASE': self.passphrase or "",
+            'OK-ACCESS-PASSPHRASE': (self.passphrase or "").strip(),
         }
         
         return headers
