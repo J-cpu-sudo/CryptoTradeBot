@@ -3,52 +3,86 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 from market_analyzer import MarketAnalyzer
+from advanced_market_filter import AdvancedMarketFilter
 
 class SignalGenerator:
     def __init__(self, market_analyzer: MarketAnalyzer):
         self.market_analyzer = market_analyzer
+        self.market_filter = AdvancedMarketFilter(market_analyzer)
         self.min_signal_strength = 0.6
         
     def get_signal(self, symbol: str = "BTC-USDT") -> Dict[str, Any]:
         """
-        Generate trading signal based on market analysis
+        Generate trading signal based on comprehensive market analysis
         Returns: {
             'action': 'buy'|'sell'|'hold',
             'strength': float (0-1),
             'confidence': float (0-1),
             'reasons': list of strings,
             'stop_loss': float,
-            'take_profit': float
+            'take_profit': float,
+            'market_filter': dict with market conditions
         }
         """
         try:
+            # First, check if market conditions are favorable
+            market_filter_result = self.market_filter.is_market_favorable(symbol)
+            
+            # If market conditions are not favorable, return hold signal
+            if not market_filter_result['favorable']:
+                return {
+                    'action': 'hold',
+                    'strength': 0.0,
+                    'confidence': 0.0,
+                    'reasons': ['Market conditions unfavorable'] + market_filter_result['reasons'][:3],
+                    'market_filter': market_filter_result,
+                    'market_grade': market_filter_result['market_grade'],
+                    'recommended_action': market_filter_result['recommended_action']
+                }
+            
             # Get market analysis
             analysis = self.market_analyzer.analyze_market(symbol)
             if not analysis:
-                return self._no_signal("Failed to get market analysis")
+                return self._no_signal("Failed to get market analysis", market_filter_result)
             
             # Get technical indicators
             indicators = analysis.get('indicators', {})
             market_conditions = analysis.get('market_conditions', {})
             
-            # Calculate signal components
+            # Calculate signal components with enhanced weighting based on market quality
+            market_quality_multiplier = market_filter_result['overall_score']
+            
             trend_signal = self._analyze_trend(indicators)
             momentum_signal = self._analyze_momentum(indicators)
             volatility_signal = self._analyze_volatility(market_conditions)
             volume_signal = self._analyze_volume(market_conditions)
             
-            # Combine signals
+            # Combine signals with market quality adjustment
             signal = self._combine_signals(
                 trend_signal, momentum_signal, 
-                volatility_signal, volume_signal
+                volatility_signal, volume_signal,
+                market_quality_multiplier
             )
+            
+            # Add market filter information to signal
+            signal['market_filter'] = market_filter_result
+            signal['market_grade'] = market_filter_result['market_grade']
+            signal['market_quality'] = market_quality_multiplier
             
             # Add stop loss and take profit levels
             current_price = analysis.get('current_price', 0)
             if current_price and signal['action'] != 'hold':
                 signal.update(self._calculate_levels(signal['action'], current_price))
             
-            logging.info(f"Generated signal: {signal['action']} (strength: {signal['strength']:.2f})")
+            # Enhance signal strength based on market conditions
+            if signal['action'] != 'hold':
+                signal['strength'] *= market_quality_multiplier
+                signal['confidence'] *= market_quality_multiplier
+                
+                # Add market quality context to reasons
+                signal['reasons'].insert(0, f"Market grade: {market_filter_result['market_grade']} ({market_filter_result['overall_score']:.1f}/1.0)")
+            
+            logging.info(f"Generated signal: {signal['action']} (strength: {signal['strength']:.2f}, market grade: {market_filter_result['market_grade']})")
             return signal
             
         except Exception as e:
@@ -179,16 +213,29 @@ class SignalGenerator:
                 'reason': f'Normal volume ({volume_ratio:.1f}x average)'
             }
     
-    def _combine_signals(self, trend, momentum, volatility, volume) -> Dict[str, Any]:
-        """Combine all signal components into final signal"""
+    def _combine_signals(self, trend, momentum, volatility, volume, market_quality_multiplier=1.0) -> Dict[str, Any]:
+        """Combine all signal components into final signal with market quality adjustment"""
         
-        # Weight the signals
-        weights = {
+        # Weight the signals (enhanced weighting based on market quality)
+        base_weights = {
             'trend': 0.4,
             'momentum': 0.3,
             'volatility': 0.2,
             'volume': 0.1
         }
+        
+        # Adjust weights based on market quality - higher quality markets get more aggressive weighting
+        quality_factor = market_quality_multiplier
+        weights = {
+            'trend': base_weights['trend'] * (1 + quality_factor * 0.2),
+            'momentum': base_weights['momentum'] * (1 + quality_factor * 0.1),
+            'volatility': base_weights['volatility'] * (1 - quality_factor * 0.1),  # Less weight on volatility in good markets
+            'volume': base_weights['volume'] * (1 + quality_factor * 0.1)
+        }
+        
+        # Normalize weights
+        total_weight = sum(weights.values())
+        weights = {k: v/total_weight for k, v in weights.items()}
         
         # Calculate weighted signal
         weighted_signal = (
@@ -206,10 +253,15 @@ class SignalGenerator:
             volume['strength'] * weights['volume']
         )
         
+        # Adjust signal thresholds based on market quality
+        buy_threshold = 0.3 - (quality_factor * 0.1)  # Lower threshold for better markets
+        sell_threshold = -0.3 + (quality_factor * 0.1)
+        min_strength_threshold = self.min_signal_strength - (quality_factor * 0.1)
+        
         # Determine action
-        if weighted_signal > 0.3 and combined_strength >= self.min_signal_strength:
+        if weighted_signal > buy_threshold and combined_strength >= min_strength_threshold:
             action = 'buy'
-        elif weighted_signal < -0.3 and combined_strength >= self.min_signal_strength:
+        elif weighted_signal < sell_threshold and combined_strength >= min_strength_threshold:
             action = 'sell'
         else:
             action = 'hold'
@@ -228,7 +280,12 @@ class SignalGenerator:
             'strength': combined_strength,
             'confidence': min(combined_strength * 1.2, 1.0),
             'reasons': reasons,
-            'weighted_signal': weighted_signal
+            'weighted_signal': weighted_signal,
+            'adjusted_thresholds': {
+                'buy_threshold': buy_threshold,
+                'sell_threshold': sell_threshold,
+                'min_strength': min_strength_threshold
+            }
         }
     
     def _calculate_levels(self, action: str, current_price: float) -> Dict[str, float]:
@@ -245,15 +302,22 @@ class SignalGenerator:
             'take_profit': round(take_profit, 2)
         }
     
-    def _no_signal(self, reason: str) -> Dict[str, Any]:
+    def _no_signal(self, reason: str, market_filter_result: Dict[str, Any] = None) -> Dict[str, Any]:
         """Return a no-signal response"""
-        return {
+        response = {
             'action': 'hold',
             'strength': 0.0,
             'confidence': 0.0,
             'reasons': [reason],
             'weighted_signal': 0.0
         }
+        
+        if market_filter_result:
+            response['market_filter'] = market_filter_result
+            response['market_grade'] = market_filter_result.get('market_grade', 'F')
+            response['recommended_action'] = market_filter_result.get('recommended_action', 'AVOID')
+        
+        return response
 
 # Convenience function for backward compatibility
 def get_signal(symbol: str = "BTC-USDT") -> str:

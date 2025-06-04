@@ -28,7 +28,7 @@ class RiskManager:
             if not all([account_balance, entry_price, stop_loss_price]):
                 return {'error': 'Missing required parameters for position sizing'}
             
-            # Calculate risk amount (2% of account balance by default)
+            # Calculate risk amount based on percentage of account balance
             risk_amount = account_balance * (risk_percent / 100)
             
             # Calculate price difference (risk per unit)
@@ -36,25 +36,40 @@ class RiskManager:
             if price_diff == 0:
                 return {'error': 'Entry price and stop loss cannot be the same'}
             
-            # Calculate position size
+            # Calculate position size based on risk amount and stop loss distance
             position_size = risk_amount / price_diff
             
             # Calculate position value
             position_value = position_size * entry_price
             
-            # Check if position value exceeds account balance
-            max_position_value = account_balance * 0.8  # Max 80% of balance per trade
+            # Apply maximum position size limits
+            max_position_percent = 0.3  # Max 30% of balance per position
+            max_position_value = account_balance * max_position_percent
+            
             if position_value > max_position_value:
+                # Adjust position size to stay within limits
                 position_size = max_position_value / entry_price
                 actual_risk = position_size * price_diff
                 risk_amount = actual_risk
+                
+                logging.warning(f"Position size reduced to stay within {max_position_percent*100}% balance limit")
+            
+            # Ensure minimum trade size (e.g., $10)
+            min_trade_value = 10.0
+            if position_value < min_trade_value:
+                position_size = min_trade_value / entry_price
+                position_value = min_trade_value
+                risk_amount = position_size * price_diff
+                
+                logging.info(f"Position size increased to meet minimum trade value of ${min_trade_value}")
             
             return {
                 'position_size': round(position_size, 8),
                 'position_value': round(position_value, 2),
                 'risk_amount': round(risk_amount, 2),
                 'risk_percent': round((risk_amount / account_balance) * 100, 2),
-                'price_diff': round(price_diff, 2)
+                'price_diff': round(price_diff, 2),
+                'max_position_value': round(max_position_value, 2)
             }
             
         except Exception as e:
