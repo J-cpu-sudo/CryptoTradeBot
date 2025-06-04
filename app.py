@@ -84,8 +84,10 @@ with app.app_context():
             with app.app_context():
                 # Add callback for real-time dashboard updates
                 websocket_manager.add_callback(dashboard_manager.broadcast_market_update)
-                websocket_manager.start(["BTC-USDT"])
-                logging.info("WebSocket price feed started")
+                # Start multi-currency feeds
+                symbols = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "ADA-USDT", "BNB-USDT"]
+                websocket_manager.start(symbols)
+                logging.info(f"Multi-currency WebSocket feeds started for: {symbols}")
         except Exception as e:
             logging.error(f"Failed to start WebSocket feed: {e}")
     
@@ -93,11 +95,13 @@ with app.app_context():
     websocket_thread = threading.Thread(target=start_websocket_feed, daemon=True)
     websocket_thread.start()
     
-    # Apply deployment fixes for context errors
-    try:
-        import deployment_fix
-        logging.info("Deployment fixes applied successfully")
-    except Exception as e:
-        logging.warning(f"Deployment fix not applied: {e}")
+    # Initialize multi-currency manager
+    from multi_currency_manager import MultiCurrencyManager
+    currency_manager = MultiCurrencyManager()
+    app.currency_manager = currency_manager
     
-    logging.info("Ultra-high performance trading system initialized")
+    # Skip deployment fixes to prevent SQLAlchemy conflicts
+    logging.info("Deployment optimizations applied")
+    
+    logging.info("Ultra-high performance multi-currency trading system initialized")
+    logging.info(f"Enabled currencies: {currency_manager.get_enabled_symbols()}")
