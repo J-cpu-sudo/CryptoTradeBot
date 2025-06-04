@@ -117,91 +117,150 @@ with app.app_context():
     
     # Initialize true autonomous trading service
     def start_autonomous_trading_service():
-        """Start autonomous trading service that operates independently"""
+        """Start enhanced autonomous trading service with persistent operation"""
         import time
         import requests
         import json
         import hmac
         import hashlib
         import base64
-        from datetime import datetime
+        from datetime import datetime, timezone
+        import threading
         
-        def autonomous_trading_loop():
-            """Main autonomous trading loop"""
-            api_key = os.environ.get('OKX_API_KEY')
-            secret_key = os.environ.get('OKX_SECRET_KEY')
-            passphrase = os.environ.get('OKX_PASSPHRASE')
-            base_url = 'https://www.okx.com'
+        class PersistentAutonomousTrader:
+            def __init__(self):
+                self.api_key = os.environ.get('OKX_API_KEY')
+                self.secret_key = os.environ.get('OKX_SECRET_KEY')
+                self.passphrase = os.environ.get('OKX_PASSPHRASE')
+                self.base_url = 'https://www.okx.com'
+                
+                self.running = True
+                self.autonomous_trades = 0
+                self.last_trade_minute = -1
+                self.error_count = 0
+                self.cached_balance = 0.0
+                self.last_balance_check = 0
+                
+                # Trading pairs optimized for low minimum orders
+                self.trading_pairs = ['DOGE-USDT', 'TRX-USDT', 'SHIB-USDT', 'PEPE-USDT']
+                
+                print(f"[AUTONOMOUS] Persistent trading service initialized")
             
-            autonomous_trades = 0
-            last_trade_minute = -1
-            
-            def generate_signature(timestamp, method, request_path, body=''):
+            def generate_signature(self, timestamp, method, request_path, body=''):
                 message = timestamp + method + request_path + body
                 mac = hmac.new(
-                    bytes(secret_key, encoding='utf8'),
+                    bytes(self.secret_key, encoding='utf8'),
                     bytes(message, encoding='utf-8'),
                     digestmod=hashlib.sha256
                 )
                 return base64.b64encode(mac.digest()).decode()
             
-            def get_headers(method, request_path, body=''):
-                timestamp = datetime.utcnow().isoformat()[:-3] + 'Z'
-                signature = generate_signature(timestamp, method, request_path, body)
+            def get_headers(self, method, request_path, body=''):
+                timestamp = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+                signature = self.generate_signature(timestamp, method, request_path, body)
                 
                 return {
-                    'OK-ACCESS-KEY': api_key,
+                    'OK-ACCESS-KEY': self.api_key,
                     'OK-ACCESS-SIGN': signature,
                     'OK-ACCESS-TIMESTAMP': timestamp,
-                    'OK-ACCESS-PASSPHRASE': passphrase,
+                    'OK-ACCESS-PASSPHRASE': self.passphrase,
                     'Content-Type': 'application/json'
                 }
             
-            def get_balance():
-                """Get USDT balance"""
+            def safe_request(self, method, url, headers=None, data=None, timeout=10):
+                """Safe request with error handling"""
+                try:
+                    if method.upper() == 'GET':
+                        response = requests.get(url, headers=headers, timeout=timeout)
+                    elif method.upper() == 'POST':
+                        response = requests.post(url, headers=headers, data=data, timeout=timeout)
+                    else:
+                        return None
+                    
+                    if response.status_code in [200, 201]:
+                        return response
+                    elif response.status_code == 429:  # Rate limit
+                        time.sleep(2)
+                        return None
+                    else:
+                        return response
+                except Exception as e:
+                    print(f"[AUTONOMOUS] Request error: {e}")
+                    return None
+            
+            def get_balance_cached(self):
+                """Get balance with caching"""
+                current_time = time.time()
+                if current_time - self.last_balance_check < 30:
+                    return self.cached_balance
+                
                 try:
                     path = '/api/v5/account/balance'
-                    headers = get_headers('GET', path)
-                    response = requests.get(base_url + path, headers=headers, timeout=10)
-                    data = response.json()
+                    headers = self.get_headers('GET', path)
+                    response = self.safe_request('GET', self.base_url + path, headers)
                     
-                    if data.get('code') == '0':
-                        for detail in data['data'][0]['details']:
-                            if detail['ccy'] == 'USDT':
-                                return float(detail['availBal'])
-                    return 0.0
-                except:
-                    return 0.0
+                    if response and response.status_code == 200:
+                        data = response.json()
+                        if data.get('code') == '0':
+                            for detail in data['data'][0]['details']:
+                                if detail['ccy'] == 'USDT':
+                                    self.cached_balance = float(detail['availBal'])
+                                    self.last_balance_check = current_time
+                                    return self.cached_balance
+                    
+                    return self.cached_balance
+                except Exception as e:
+                    print(f"[AUTONOMOUS] Balance check error: {e}")
+                    return self.cached_balance
             
-            def execute_autonomous_trade(symbol, amount):
-                """Execute autonomous trade"""
+            def find_optimal_trading_pair(self, balance):
+                """Find optimal trading pair for current balance"""
+                for symbol in self.trading_pairs:
+                    try:
+                        # Get current price
+                        response = self.safe_request('GET', f'{self.base_url}/api/v5/market/ticker?instId={symbol}')
+                        if not response or response.status_code != 200:
+                            continue
+                        
+                        price_data = response.json()
+                        if not price_data.get('data'):
+                            continue
+                        
+                        current_price = float(price_data['data'][0]['last'])
+                        
+                        # Get instrument specifications
+                        response = self.safe_request('GET', f'{self.base_url}/api/v5/public/instruments?instType=SPOT&instId={symbol}')
+                        if not response or response.status_code != 200:
+                            continue
+                        
+                        inst_data = response.json()
+                        if not inst_data.get('data'):
+                            continue
+                        
+                        instrument = inst_data['data'][0]
+                        min_size = float(instrument.get('minSz', '0'))
+                        lot_size = float(instrument.get('lotSz', '0'))
+                        
+                        # Calculate trade parameters
+                        trade_amount = balance * 0.85  # Use 85% of balance
+                        max_quantity = trade_amount / current_price
+                        
+                        if lot_size > 0:
+                            max_quantity = int(max_quantity / lot_size) * lot_size
+                        
+                        if max_quantity >= min_size and trade_amount >= 1.0:
+                            final_amount = max_quantity * current_price
+                            return symbol, current_price, max_quantity, final_amount
+                    
+                    except Exception as e:
+                        print(f"[AUTONOMOUS] Error analyzing {symbol}: {e}")
+                        continue
+                
+                return None, 0, 0, 0
+            
+            def execute_autonomous_trade(self, symbol, quantity, price, amount):
+                """Execute autonomous trade with comprehensive error handling"""
                 try:
-                    # Get current price
-                    ticker_response = requests.get(f'{base_url}/api/v5/market/ticker?instId={symbol}', timeout=10)
-                    ticker_data = ticker_response.json()
-                    
-                    if not ticker_data.get('data'):
-                        return False
-                    
-                    current_price = float(ticker_data['data'][0]['last'])
-                    quantity = amount / current_price
-                    
-                    # Get instrument specifications
-                    instrument_response = requests.get(f'{base_url}/api/v5/public/instruments?instType=SPOT&instId={symbol}', timeout=10)
-                    if instrument_response.status_code == 200:
-                        instrument_data = instrument_response.json()
-                        if instrument_data.get('data'):
-                            instrument = instrument_data['data'][0]
-                            min_size = float(instrument.get('minSz', '0'))
-                            lot_size = float(instrument.get('lotSz', '0'))
-                            
-                            if lot_size > 0:
-                                quantity = round(quantity / lot_size) * lot_size
-                            
-                            if quantity < min_size:
-                                return False
-                    
-                    # Place order
                     order_data = {
                         "instId": symbol,
                         "tdMode": "cash",
@@ -212,71 +271,118 @@ with app.app_context():
                     
                     path = '/api/v5/trade/order'
                     body = json.dumps(order_data)
-                    headers = get_headers('POST', path, body)
+                    headers = self.get_headers('POST', path, body)
                     
-                    response = requests.post(base_url + path, headers=headers, data=body, timeout=10)
-                    result = response.json()
+                    response = self.safe_request('POST', self.base_url + path, headers, body)
                     
-                    if result.get('code') == '0':
-                        order_id = result['data'][0]['ordId']
-                        logging.info(f"[AUTONOMOUS] Trade executed: {symbol} - Order ID: {order_id} - Quantity: {quantity:.6f} - Price: ${current_price:.6f}")
-                        return True
+                    if response and response.status_code == 200:
+                        result = response.json()
+                        if result.get('code') == '0':
+                            order_id = result['data'][0]['ordId']
+                            timestamp = datetime.now().strftime('%H:%M:%S')
+                            print(f"\n[AUTONOMOUS] TRADE EXECUTED at {timestamp}")
+                            print(f"Order ID: {order_id}")
+                            print(f"Pair: {symbol} | Qty: {quantity:.6f} | Price: ${price:.6f}")
+                            print(f"Value: ${amount:.2f} | Trade #{self.autonomous_trades + 1}")
+                            
+                            self.error_count = 0
+                            return True
+                        else:
+                            print(f"[AUTONOMOUS] Trade rejected: {result.get('msg', 'Unknown error')}")
                     else:
-                        logging.error(f"[AUTONOMOUS] Trade failed: {result.get('msg', 'Unknown error')}")
+                        status = response.status_code if response else "No response"
+                        print(f"[AUTONOMOUS] Trade failed - HTTP {status}")
                     
                     return False
+                
                 except Exception as e:
-                    logging.error(f"[AUTONOMOUS] Trade execution error: {e}")
+                    print(f"[AUTONOMOUS] Trade execution error: {e}")
                     return False
             
-            logging.info("[AUTONOMOUS] Independent trading service started")
-            
-            while True:
+            def autonomous_cycle(self):
+                """Execute one autonomous trading cycle"""
                 try:
                     current_time = datetime.now()
                     current_minute = current_time.minute
                     
-                    # Execute trades every 4 minutes to ensure independence
-                    if current_minute % 4 == 0 and current_minute != last_trade_minute:
-                        last_trade_minute = current_minute
+                    # Execute every 4 minutes
+                    if current_minute % 4 == 0 and current_minute != self.last_trade_minute:
+                        self.last_trade_minute = current_minute
                         
-                        balance = get_balance()
-                        logging.info(f"[AUTONOMOUS] Cycle check - USDT balance: ${balance:.2f}")
+                        timestamp = current_time.strftime('%H:%M:%S')
+                        print(f"\n[AUTONOMOUS] Cycle #{self.autonomous_trades + 1} at {timestamp}")
                         
-                        if balance > 0.6:
-                            # Time-based symbol selection for true autonomy
-                            hour = current_time.hour
-                            symbols = ['TRX-USDT', 'DOGE-USDT', 'ADA-USDT']
-                            symbol = symbols[hour % len(symbols)]
+                        balance = self.get_balance_cached()
+                        print(f"[AUTONOMOUS] Available: ${balance:.2f} USDT")
+                        
+                        if balance >= 1.0:  # Minimum $1 for trading
+                            symbol, price, quantity, amount = self.find_optimal_trading_pair(balance)
                             
-                            trade_amount = min(0.6, balance - 0.1)
-                            
-                            logging.info(f"[AUTONOMOUS] Attempting trade: {symbol} for ${trade_amount:.2f}")
-                            
-                            if execute_autonomous_trade(symbol, trade_amount):
-                                autonomous_trades += 1
-                                logging.info(f"[AUTONOMOUS] Total autonomous trades executed: {autonomous_trades}")
+                            if symbol:
+                                print(f"[AUTONOMOUS] Selected: {symbol} | ${price:.6f} | Qty: {quantity:.6f}")
+                                
+                                if self.execute_autonomous_trade(symbol, quantity, price, amount):
+                                    self.autonomous_trades += 1
+                                    print(f"[AUTONOMOUS] Total trades: {self.autonomous_trades}")
+                                    self.cached_balance = 0  # Force refresh
+                                else:
+                                    self.error_count += 1
+                                    print(f"[AUTONOMOUS] Trade failed - Errors: {self.error_count}")
                             else:
-                                logging.info("[AUTONOMOUS] Trade execution failed")
+                                print(f"[AUTONOMOUS] No suitable pairs found")
                         else:
-                            logging.info("[AUTONOMOUS] Insufficient balance for trading")
+                            print(f"[AUTONOMOUS] Insufficient balance: ${balance:.2f}")
                     
-                    time.sleep(30)  # Check every 30 seconds
-                    
+                    return True
+                
                 except Exception as e:
-                    logging.error(f"[AUTONOMOUS] Service error: {e}")
-                    time.sleep(60)
+                    print(f"[AUTONOMOUS] Cycle error: {e}")
+                    self.error_count += 1
+                    return self.error_count < 10
+            
+            def run_persistent(self):
+                """Main persistent loop"""
+                print(f"[AUTONOMOUS] Starting continuous operation")
+                print(f"[AUTONOMOUS] Schedule: Every 4 minutes (00, 04, 08, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56)")
+                
+                cycle_count = 0
+                
+                while self.running:
+                    try:
+                        if not self.autonomous_cycle():
+                            print(f"[AUTONOMOUS] Error threshold reached - Resetting")
+                            self.error_count = 0
+                            time.sleep(60)
+                        
+                        cycle_count += 1
+                        
+                        # Status update every 50 cycles
+                        if cycle_count % 50 == 0:
+                            timestamp = datetime.now().strftime('%H:%M:%S')
+                            print(f"[AUTONOMOUS] Status at {timestamp}: {cycle_count} cycles, {self.autonomous_trades} trades")
+                        
+                        time.sleep(30)  # Check every 30 seconds
+                        
+                    except Exception as e:
+                        print(f"[AUTONOMOUS] Main loop error: {e}")
+                        self.error_count += 1
+                        time.sleep(60)
+                
+                print(f"[AUTONOMOUS] Service stopped. Total trades: {self.autonomous_trades}")
         
-        # Start autonomous trading service in background thread
-        autonomous_thread = threading.Thread(target=autonomous_trading_loop, daemon=True)
-        autonomous_thread.start()
-        logging.info("[AUTONOMOUS] Independent trading service thread started")
+        # Start persistent autonomous trader
+        def start_persistent_trader():
+            trader = PersistentAutonomousTrader()
+            trader.run_persistent()
+        
+        # Run in background thread
+        trader_thread = threading.Thread(target=start_persistent_trader, daemon=True)
+        trader_thread.start()
+        
+        print("[AUTONOMOUS] Persistent trading service started in background")
     
     # Start the autonomous trading service
     start_autonomous_trading_service()
-    
-    # Skip deployment fixes to prevent SQLAlchemy conflicts
-    logging.info("Deployment optimizations applied")
     
     logging.info("Ultra-high performance multi-currency trading system initialized")
     logging.info(f"Enabled currencies: {currency_manager.get_enabled_symbols()}")
