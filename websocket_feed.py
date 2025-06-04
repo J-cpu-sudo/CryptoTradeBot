@@ -287,11 +287,12 @@ class WebSocketPriceFeed:
 class WebSocketManager:
     """Thread-safe WebSocket manager for integration with Flask app"""
     
-    def __init__(self):
+    def __init__(self, app=None):
         self.feed = WebSocketPriceFeed()
         self.loop = None
         self.thread = None
         self.running = False
+        self.app = app
     
     def start(self, symbols: list = ["BTC-USDT"]):
         """Start WebSocket feed in background thread"""
