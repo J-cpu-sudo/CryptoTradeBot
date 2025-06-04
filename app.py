@@ -67,6 +67,18 @@ with app.app_context():
     bot_manager = BotManager(db, scheduler)
     app.bot_manager = bot_manager
     
+    # Auto-start the autonomous trading bot
+    try:
+        if bot_manager.status.value != 'running':
+            logging.info("Starting autonomous trading bot on app initialization...")
+            success = bot_manager.start()
+            if success:
+                logging.info("Autonomous trading bot started successfully")
+            else:
+                logging.error("Failed to start autonomous trading bot")
+    except Exception as e:
+        logging.error(f"Error starting autonomous trading bot: {e}")
+    
     # Initialize real-time dashboard
     from realtime_dashboard import RealtimeDashboard, realtime_bp
     dashboard_manager = RealtimeDashboard(socketio)
