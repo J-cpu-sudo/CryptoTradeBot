@@ -1,0 +1,324 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row g-4">
+    <!-- Performance Overview -->
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="fas fa-chart-line me-2"></i>Performance Overview
+                </h5>
+                <div class="btn-group" role="group">
+                    <button class="btn btn-outline-primary btn-sm" onclick="loadPerformanceData(7)">7D</button>
+                    <button class="btn btn-outline-primary btn-sm active" onclick="loadPerformanceData(30)">30D</button>
+                    <button class="btn btn-outline-primary btn-sm" onclick="loadPerformanceData(90)">90D</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h3 id="total-pnl" class="pnl-value">$0.00</h3>
+                            <p class="text-muted">Total P&L</p>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h3 id="win-rate">0%</h3>
+                            <p class="text-muted">Win Rate</p>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h3 id="total-trades">0</h3>
+                            <p class="text-muted">Total Trades</p>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h3 id="avg-trade">$0.00</h3>
+                            <p class="text-muted">Avg Trade</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-chart-area me-2"></i>Cumulative P&L
+                </h5>
+            </div>
+            <div class="card-body">
+                <canvas id="pnl-chart" height="300"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-chart-pie me-2"></i>Trade Distribution
+                </h5>
+            </div>
+            <div class="card-body">
+                <canvas id="distribution-chart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Daily P&L -->
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-chart-bar me-2"></i>Daily P&L
+                </h5>
+            </div>
+            <div class="card-body">
+                <canvas id="daily-pnl-chart" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Risk Metrics -->
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-shield-alt me-2"></i>Risk Metrics
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="metric-item">
+                            <h6>Risk per Trade</h6>
+                            <p id="risk-percent" class="h5">2.0%</p>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="metric-item">
+                            <h6>Max Daily Trades</h6>
+                            <p id="max-trades" class="h5">10</p>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="metric-item">
+                            <h6>Weekly P&L</h6>
+                            <p id="weekly-pnl" class="h5 pnl-value">$0.00</p>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="metric-item">
+                            <h6>Monthly P&L</h6>
+                            <p id="monthly-pnl" class="h5 pnl-value">$0.00</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let pnlChart, distributionChart, dailyPnlChart;
+let currentPeriod = 30;
+
+document.addEventListener('DOMContentLoaded', function() {
+    initializeCharts();
+    loadPerformanceData(30);
+    loadRiskMetrics();
+});
+
+function initializeCharts() {
+    // Initialize P&L Chart
+    const pnlCtx = document.getElementById('pnl-chart').getContext('2d');
+    pnlChart = new Chart(pnlCtx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Cumulative P&L',
+                data: [],
+                borderColor: 'rgb(75, 192, 192)',
+                backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                tension: 0.1,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return '$' + value.toFixed(2);
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // Initialize Distribution Chart
+    const distCtx = document.getElementById('distribution-chart').getContext('2d');
+    distributionChart = new Chart(distCtx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Wins', 'Losses'],
+            datasets: [{
+                data: [0, 0],
+                backgroundColor: ['#28a745', '#dc3545'],
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+
+    // Initialize Daily P&L Chart
+    const dailyCtx = document.getElementById('daily-pnl-chart').getContext('2d');
+    dailyPnlChart = new Chart(dailyCtx, {
+        type: 'bar',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Daily P&L',
+                data: [],
+                backgroundColor: function(ctx) {
+                    return ctx.parsed.y >= 0 ? '#28a745' : '#dc3545';
+                }
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return '$' + value.toFixed(2);
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+function loadPerformanceData(days) {
+    currentPeriod = days;
+    
+    // Update active button
+    document.querySelectorAll('.btn-group .btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    event.target.classList.add('active');
+    
+    fetch(`/api/performance?days=${days}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                showAlert('Error loading performance data: ' + data.error, 'danger');
+                return;
+            }
+            
+            updatePerformanceMetrics(data);
+            updateCharts(data);
+        })
+        .catch(error => {
+            console.error('Error loading performance data:', error);
+            showAlert('Error loading performance data', 'danger');
+        });
+}
+
+function updatePerformanceMetrics(data) {
+    document.getElementById('total-pnl').textContent = formatCurrency(data.total_pnl);
+    document.getElementById('win-rate').textContent = data.win_rate.toFixed(1) + '%';
+    document.getElementById('total-trades').textContent = data.total_trades;
+    document.getElementById('avg-trade').textContent = formatCurrency(data.avg_trade);
+    
+    // Update P&L colors
+    updatePnLColor('total-pnl', data.total_pnl);
+    updatePnLColor('avg-trade', data.avg_trade);
+}
+
+function updateCharts(data) {
+    // Update Cumulative P&L Chart
+    if (data.cumulative_pnl && data.cumulative_pnl.length > 0) {
+        const labels = data.cumulative_pnl.map(item => 
+            new Date(item.date).toLocaleDateString()
+        );
+        const values = data.cumulative_pnl.map(item => item.pnl);
+        
+        pnlChart.data.labels = labels;
+        pnlChart.data.datasets[0].data = values;
+        pnlChart.update();
+    }
+    
+    // Update Distribution Chart
+    const distribution = data.trade_distribution || { wins: 0, losses: 0 };
+    distributionChart.data.datasets[0].data = [distribution.wins, distribution.losses];
+    distributionChart.update();
+    
+    // Update Daily P&L Chart
+    if (data.daily_pnl && data.daily_pnl.length > 0) {
+        const dailyLabels = data.daily_pnl.map(item => 
+            new Date(item.date).toLocaleDateString()
+        );
+        const dailyValues = data.daily_pnl.map(item => item.pnl);
+        
+        dailyPnlChart.data.labels = dailyLabels;
+        dailyPnlChart.data.datasets[0].data = dailyValues;
+        dailyPnlChart.data.datasets[0].backgroundColor = dailyValues.map(value => 
+            value >= 0 ? '#28a745' : '#dc3545'
+        );
+        dailyPnlChart.update();
+    }
+}
+
+function loadRiskMetrics() {
+    fetch('/api/config')
+        .then(response => response.json())
+        .then(config => {
+            document.getElementById('risk-percent').textContent = config.risk_percent + '%';
+            document.getElementById('max-trades').textContent = config.max_trades_per_day;
+        })
+        .catch(error => {
+            console.error('Error loading risk metrics:', error);
+        });
+    
+    // Load additional risk metrics from risk manager
+    // This would require a new API endpoint for risk metrics
+    // For now, we'll use mock data or fetch from existing endpoints
+}
+</script>
+{% endblock %}

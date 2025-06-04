@@ -1,0 +1,345 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row g-4">
+    <!-- Bot Configuration -->
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="fas fa-cog me-2"></i>Bot Configuration
+                </h5>
+                <button class="btn btn-primary btn-sm" onclick="saveConfig()">
+                    <i class="fas fa-save me-1"></i>Save Changes
+                </button>
+            </div>
+            <div class="card-body">
+                <form id="config-form">
+                    <div class="row g-3">
+                        <!-- Trading Settings -->
+                        <div class="col-12">
+                            <h6 class="border-bottom pb-2">Trading Settings</h6>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label for="trading_enabled" class="form-label">Trading Enabled</label>
+                            <select id="trading_enabled" name="trading_enabled" class="form-select">
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                            <div class="form-text">Enable or disable automated trading</div>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label for="dry_run" class="form-label">Dry Run Mode</label>
+                            <select id="dry_run" name="dry_run" class="form-select">
+                                <option value="true">Enabled (Simulation)</option>
+                                <option value="false">Disabled (Live Trading)</option>
+                            </select>
+                            <div class="form-text">Run in simulation mode without real trades</div>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label for="symbol" class="form-label">Trading Symbol</label>
+                            <select id="symbol" name="symbol" class="form-select">
+                                <option value="BTC-USDT">BTC-USDT</option>
+                                <option value="ETH-USDT">ETH-USDT</option>
+                                <option value="ADA-USDT">ADA-USDT</option>
+                                <option value="SOL-USDT">SOL-USDT</option>
+                            </select>
+                            <div class="form-text">Cryptocurrency pair to trade</div>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label for="max_trades_per_day" class="form-label">Max Trades Per Day</label>
+                            <input type="number" id="max_trades_per_day" name="max_trades_per_day" 
+                                   class="form-control" min="1" max="50">
+                            <div class="form-text">Maximum number of trades allowed per day</div>
+                        </div>
+                        
+                        <!-- Risk Management -->
+                        <div class="col-12 mt-4">
+                            <h6 class="border-bottom pb-2">Risk Management</h6>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label for="risk_percent" class="form-label">Risk Percentage</label>
+                            <div class="input-group">
+                                <input type="number" id="risk_percent" name="risk_percent" 
+                                       class="form-control" min="0.1" max="10" step="0.1">
+                                <span class="input-group-text">%</span>
+                            </div>
+                            <div class="form-text">Percentage of account to risk per trade</div>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label for="stop_loss_percent" class="form-label">Stop Loss</label>
+                            <div class="input-group">
+                                <input type="number" id="stop_loss_percent" name="stop_loss_percent" 
+                                       class="form-control" min="0.5" max="10" step="0.1">
+                                <span class="input-group-text">%</span>
+                            </div>
+                            <div class="form-text">Stop loss percentage</div>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label for="take_profit_percent" class="form-label">Take Profit</label>
+                            <div class="input-group">
+                                <input type="number" id="take_profit_percent" name="take_profit_percent" 
+                                       class="form-control" min="1" max="20" step="0.1">
+                                <span class="input-group-text">%</span>
+                            </div>
+                            <div class="form-text">Take profit percentage</div>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label for="cooldown_minutes" class="form-label">Trade Cooldown</label>
+                            <div class="input-group">
+                                <input type="number" id="cooldown_minutes" name="cooldown_minutes" 
+                                       class="form-control" min="1" max="120">
+                                <span class="input-group-text">min</span>
+                            </div>
+                            <div class="form-text">Minimum time between trades</div>
+                        </div>
+                        
+                        <!-- Signal Settings -->
+                        <div class="col-12 mt-4">
+                            <h6 class="border-bottom pb-2">Signal Settings</h6>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label for="min_signal_strength" class="form-label">Minimum Signal Strength</label>
+                            <input type="number" id="min_signal_strength" name="min_signal_strength" 
+                                   class="form-control" min="0.1" max="1" step="0.1">
+                            <div class="form-text">Minimum signal strength required for trading (0.1-1.0)</div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <!-- API Configuration -->
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-key me-2"></i>API Configuration
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle me-2"></i>
+                    <strong>Environment Variables</strong><br>
+                    API credentials are configured via environment variables for security:
+                </div>
+                
+                <div class="config-item">
+                    <strong>OKX_API_KEY</strong>
+                    <p class="text-muted small">Your OKX API key</p>
+                    <span id="api-key-status" class="badge bg-secondary">Not Set</span>
+                </div>
+                
+                <div class="config-item">
+                    <strong>OKX_SECRET_KEY</strong>
+                    <p class="text-muted small">Your OKX secret key</p>
+                    <span id="secret-key-status" class="badge bg-secondary">Not Set</span>
+                </div>
+                
+                <div class="config-item">
+                    <strong>OKX_PASSPHRASE</strong>
+                    <p class="text-muted small">Your OKX passphrase</p>
+                    <span id="passphrase-status" class="badge bg-secondary">Not Set</span>
+                </div>
+                
+                <div class="mt-3">
+                    <button class="btn btn-outline-primary btn-sm" onclick="checkApiStatus()">
+                        <i class="fas fa-sync-alt me-1"></i>Check API Status
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- System Information -->
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-info-circle me-2"></i>System Information
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="info-item">
+                    <strong>Bot Version:</strong>
+                    <span class="text-muted">2.0.0</span>
+                </div>
+                
+                <div class="info-item">
+                    <strong>Database:</strong>
+                    <span class="text-muted">SQLite</span>
+                </div>
+                
+                <div class="info-item">
+                    <strong>Last Config Update:</strong>
+                    <span id="last-update" class="text-muted">-</span>
+                </div>
+                
+                <div class="info-item">
+                    <strong>Current Time:</strong>
+                    <span id="current-time" class="text-muted">-</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Configuration History -->
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-history me-2"></i>Recent Configuration Changes
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Parameter</th>
+                                <th>Old Value</th>
+                                <th>New Value</th>
+                                <th>Updated</th>
+                                <th>Description</th>
+                            </tr>
+                        </thead>
+                        <tbody id="config-history">
+                            <tr>
+                                <td colspan="5" class="text-center text-muted">
+                                    Configuration history will appear here after changes are made
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Success/Error Alerts -->
+<div id="config-alerts" class="position-fixed top-0 end-0 p-3" style="z-index: 1050;"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    loadConfiguration();
+    checkApiStatus();
+    updateCurrentTime();
+    setInterval(updateCurrentTime, 1000);
+});
+
+function loadConfiguration() {
+    fetch('/api/config')
+        .then(response => response.json())
+        .then(config => {
+            if (config.error) {
+                showConfigAlert('Error loading configuration: ' + config.error, 'danger');
+                return;
+            }
+            
+            // Populate form fields
+            Object.keys(config).forEach(key => {
+                const field = document.getElementById(key);
+                if (field) {
+                    field.value = config[key];
+                }
+            });
+            
+            // Update last update time
+            const lastUpdate = config.last_updated || 'Never';
+            document.getElementById('last-update').textContent = 
+                lastUpdate !== 'Never' ? new Date(lastUpdate).toLocaleString() : lastUpdate;
+        })
+        .catch(error => {
+            console.error('Error loading configuration:', error);
+            showConfigAlert('Error loading configuration', 'danger');
+        });
+}
+
+function saveConfig() {
+    const form = document.getElementById('config-form');
+    const formData = new FormData(form);
+    const config = {};
+    
+    // Convert form data to object
+    for (let [key, value] of formData.entries()) {
+        config[key] = value;
+    }
+    
+    fetch('/api/config', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(config)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showConfigAlert('Error saving configuration: ' + data.error, 'danger');
+        } else {
+            showConfigAlert('Configuration saved successfully', 'success');
+            // Reload configuration to reflect any server-side changes
+            setTimeout(() => loadConfiguration(), 1000);
+        }
+    })
+    .catch(error => {
+        console.error('Error saving configuration:', error);
+        showConfigAlert('Error saving configuration', 'danger');
+    });
+}
+
+function checkApiStatus() {
+    // Check if API keys are set (we can't show the actual values for security)
+    const apiKey = '{{ "OKX_API_KEY" in os.environ }}' === 'True';
+    const secretKey = '{{ "OKX_SECRET_KEY" in os.environ }}' === 'True';
+    const passphrase = '{{ "OKX_PASSPHRASE" in os.environ }}' === 'True';
+    
+    document.getElementById('api-key-status').textContent = apiKey ? 'Set' : 'Not Set';
+    document.getElementById('api-key-status').className = `badge ${apiKey ? 'bg-success' : 'bg-danger'}`;
+    
+    document.getElementById('secret-key-status').textContent = secretKey ? 'Set' : 'Not Set';
+    document.getElementById('secret-key-status').className = `badge ${secretKey ? 'bg-success' : 'bg-danger'}`;
+    
+    document.getElementById('passphrase-status').textContent = passphrase ? 'Set' : 'Not Set';
+    document.getElementById('passphrase-status').className = `badge ${passphrase ? 'bg-success' : 'bg-danger'}`;
+}
+
+function updateCurrentTime() {
+    document.getElementById('current-time').textContent = new Date().toLocaleString();
+}
+
+function showConfigAlert(message, type = 'info') {
+    const alertsContainer = document.getElementById('config-alerts');
+    const alertId = 'alert-' + Date.now();
+    
+    const alertHTML = `
+        <div id="${alertId}" class="alert alert-${type} alert-dismissible fade show" role="alert">
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+    `;
+    
+    alertsContainer.insertAdjacentHTML('beforeend', alertHTML);
+    
+    // Auto-dismiss after 5 seconds
+    setTimeout(() => {
+        const alert = document.getElementById(alertId);
+        if (alert) {
+            const bsAlert = new bootstrap.Alert(alert);
+            bsAlert.close();
+        }
+    }, 5000);
+}
+</script>
+{% endblock %}

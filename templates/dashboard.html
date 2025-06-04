@@ -1,0 +1,354 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row g-4">
+    <!-- Bot Control Panel -->
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="fas fa-play-circle me-2"></i>Bot Control
+                </h5>
+                <div class="btn-group" role="group">
+                    <button id="start-btn" class="btn btn-success btn-sm" onclick="controlBot('start')">
+                        <i class="fas fa-play me-1"></i>Start
+                    </button>
+                    <button id="pause-btn" class="btn btn-warning btn-sm" onclick="controlBot('pause')">
+                        <i class="fas fa-pause me-1"></i>Pause
+                    </button>
+                    <button id="stop-btn" class="btn btn-danger btn-sm" onclick="controlBot('stop')">
+                        <i class="fas fa-stop me-1"></i>Stop
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>Bot Status</h6>
+                        <p id="bot-status-detail" class="text-muted">Loading...</p>
+                        <p><strong>Last Run:</strong> <span id="last-run">-</span></p>
+                        <p><strong>Error Count:</strong> <span id="error-count">0</span></p>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>Quick Stats</h6>
+                        <p><strong>Daily P&L:</strong> <span id="daily-pnl" class="pnl-value">$0.00</span></p>
+                        <p><strong>Total P&L:</strong> <span id="total-pnl" class="pnl-value">$0.00</span></p>
+                        <p><strong>Today's Trades:</strong> <span id="today-trades">0</span></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Market Analysis -->
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-chart-area me-2"></i>Market Analysis
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>Technical Indicators</h6>
+                        <div class="indicator-grid">
+                            <div class="indicator-item">
+                                <span class="indicator-label">EMA 12:</span>
+                                <span id="ema-12" class="indicator-value">-</span>
+                            </div>
+                            <div class="indicator-item">
+                                <span class="indicator-label">EMA 26:</span>
+                                <span id="ema-26" class="indicator-value">-</span>
+                            </div>
+                            <div class="indicator-item">
+                                <span class="indicator-label">RSI:</span>
+                                <span id="rsi" class="indicator-value">-</span>
+                            </div>
+                            <div class="indicator-item">
+                                <span class="indicator-label">MACD:</span>
+                                <span id="macd" class="indicator-value">-</span>
+                            </div>
+                            <div class="indicator-item">
+                                <span class="indicator-label">ATR:</span>
+                                <span id="atr" class="indicator-value">-</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>Market Conditions</h6>
+                        <div class="indicator-grid">
+                            <div class="indicator-item">
+                                <span class="indicator-label">Current Price:</span>
+                                <span id="current-price" class="indicator-value">-</span>
+                            </div>
+                            <div class="indicator-item">
+                                <span class="indicator-label">24h Change:</span>
+                                <span id="price-change" class="indicator-value">-</span>
+                            </div>
+                            <div class="indicator-item">
+                                <span class="indicator-label">Volume Ratio:</span>
+                                <span id="volume-ratio" class="indicator-value">-</span>
+                            </div>
+                            <div class="indicator-item">
+                                <span class="indicator-label">Volatility:</span>
+                                <span id="volatility" class="indicator-value">-</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Activity -->
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-history me-2"></i>Recent Activity
+                </h5>
+            </div>
+            <div class="card-body">
+                <div id="recent-logs" class="activity-log">
+                    <div class="text-center text-muted">
+                        <div class="spinner-border spinner-border-sm" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2">Loading recent activity...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Trades -->
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="fas fa-exchange-alt me-2"></i>Recent Trades
+                </h5>
+                <a href="{{ url_for('trades') }}" class="btn btn-outline-primary btn-sm">
+                    View All <i class="fas fa-arrow-right ms-1"></i>
+                </a>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Type</th>
+                                <th>Symbol</th>
+                                <th>Quantity</th>
+                                <th>Price</th>
+                                <th>Status</th>
+                                <th>P&L</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recent-trades">
+                            <tr>
+                                <td colspan="7" class="text-center text-muted">
+                                    <div class="spinner-border spinner-border-sm" role="status">
+                                        <span class="visually-hidden">Loading...</span>
+                                    </div>
+                                    Loading trades...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Alerts Container -->
+<div id="alerts-container" class="position-fixed top-0 end-0 p-3" style="z-index: 1050;"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Dashboard-specific functionality
+document.addEventListener('DOMContentLoaded', function() {
+    loadDashboardData();
+    setInterval(loadDashboardData, 30000); // Refresh every 30 seconds
+});
+
+function loadDashboardData() {
+    Promise.all([
+        fetch('/api/status'),
+        fetch('/api/market-data'),
+        fetch('/api/logs?limit=10')
+    ])
+    .then(responses => Promise.all(responses.map(r => r.json())))
+    .then(([status, marketData, logs]) => {
+        updateBotStatus(status);
+        updateMarketData(marketData);
+        updateRecentLogs(logs);
+        updateRecentTrades(status.recent_trades || []);
+    })
+    .catch(error => {
+        console.error('Error loading dashboard data:', error);
+        showAlert('Error loading dashboard data', 'danger');
+    });
+}
+
+function updateBotStatus(status) {
+    // Update status badge
+    const statusBadge = document.getElementById('bot-status');
+    const statusDetail = document.getElementById('bot-status-detail');
+    
+    const statusConfig = {
+        'running': { class: 'bg-success', icon: 'play', text: 'Running' },
+        'stopped': { class: 'bg-danger', icon: 'stop', text: 'Stopped' },
+        'paused': { class: 'bg-warning', icon: 'pause', text: 'Paused' },
+        'error': { class: 'bg-danger', icon: 'exclamation-triangle', text: 'Error' }
+    };
+    
+    const config = statusConfig[status.status] || statusConfig['stopped'];
+    statusBadge.className = `badge ${config.class}`;
+    statusBadge.innerHTML = `<i class="fas fa-${config.icon} me-1"></i>${config.text}`;
+    statusDetail.textContent = config.text;
+    
+    // Update other fields
+    document.getElementById('last-run').textContent = status.last_run ? 
+        new Date(status.last_run).toLocaleString() : 'Never';
+    document.getElementById('error-count').textContent = status.error_count || 0;
+    document.getElementById('daily-pnl').textContent = formatCurrency(status.daily_pnl || 0);
+    document.getElementById('total-pnl').textContent = formatCurrency(status.total_pnl || 0);
+    document.getElementById('today-trades').textContent = status.today_trades || 0;
+    
+    // Update P&L colors
+    updatePnLColor('daily-pnl', status.daily_pnl || 0);
+    updatePnLColor('total-pnl', status.total_pnl || 0);
+}
+
+function updateMarketData(data) {
+    if (data.error) {
+        console.error('Market data error:', data.error);
+        return;
+    }
+    
+    const indicators = data.indicators || {};
+    const conditions = data.market_conditions || {};
+    
+    // Update technical indicators
+    document.getElementById('ema-12').textContent = indicators.ema_12 ? 
+        formatCurrency(indicators.ema_12) : '-';
+    document.getElementById('ema-26').textContent = indicators.ema_26 ? 
+        formatCurrency(indicators.ema_26) : '-';
+    document.getElementById('rsi').textContent = indicators.rsi ? 
+        indicators.rsi.toFixed(1) : '-';
+    document.getElementById('macd').textContent = indicators.macd ? 
+        indicators.macd.toFixed(4) : '-';
+    document.getElementById('atr').textContent = indicators.atr ? 
+        formatCurrency(indicators.atr) : '-';
+    
+    // Update market conditions
+    document.getElementById('current-price').textContent = data.current_price ? 
+        formatCurrency(data.current_price) : '-';
+    document.getElementById('price-change').textContent = indicators.price_change_24h ? 
+        indicators.price_change_24h.toFixed(2) + '%' : '-';
+    document.getElementById('volume-ratio').textContent = conditions.volume_ratio ? 
+        conditions.volume_ratio.toFixed(2) + 'x' : '-';
+    document.getElementById('volatility').textContent = conditions.current_volatility ? 
+        conditions.current_volatility.toFixed(2) + '%' : '-';
+    
+    // Update price change color
+    const priceChangeEl = document.getElementById('price-change');
+    if (indicators.price_change_24h) {
+        priceChangeEl.className = indicators.price_change_24h >= 0 ? 
+            'indicator-value text-success' : 'indicator-value text-danger';
+    }
+}
+
+function updateRecentLogs(logs) {
+    const container = document.getElementById('recent-logs');
+    
+    if (!logs || logs.length === 0) {
+        container.innerHTML = '<p class="text-muted">No recent activity</p>';
+        return;
+    }
+    
+    const logItems = logs.map(log => {
+        const levelClass = {
+            'ERROR': 'text-danger',
+            'WARNING': 'text-warning',
+            'INFO': 'text-info'
+        }[log.level] || 'text-muted';
+        
+        const time = new Date(log.timestamp).toLocaleTimeString();
+        
+        return `
+            <div class="activity-item">
+                <div class="d-flex justify-content-between">
+                    <small class="${levelClass}">${log.level}</small>
+                    <small class="text-muted">${time}</small>
+                </div>
+                <p class="mb-1">${log.message}</p>
+                ${log.component ? `<small class="text-muted">${log.component}</small>` : ''}
+            </div>
+        `;
+    }).join('');
+    
+    container.innerHTML = logItems;
+}
+
+function updateRecentTrades(trades) {
+    const tbody = document.getElementById('recent-trades');
+    
+    if (!trades || trades.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No recent trades</td></tr>';
+        return;
+    }
+    
+    const tradeRows = trades.map(trade => {
+        const time = new Date(trade.timestamp).toLocaleTimeString();
+        const typeClass = trade.trade_type === 'buy' ? 'text-success' : 'text-danger';
+        const statusClass = {
+            'executed': 'text-success',
+            'pending': 'text-warning',
+            'cancelled': 'text-muted',
+            'failed': 'text-danger'
+        }[trade.status] || 'text-muted';
+        
+        const pnlClass = trade.pnl >= 0 ? 'text-success' : 'text-danger';
+        
+        return `
+            <tr>
+                <td>${time}</td>
+                <td><span class="${typeClass}">${trade.trade_type.toUpperCase()}</span></td>
+                <td>${trade.symbol}</td>
+                <td>${trade.quantity}</td>
+                <td>${formatCurrency(trade.price)}</td>
+                <td><span class="${statusClass}">${trade.status}</span></td>
+                <td><span class="${pnlClass}">${formatCurrency(trade.pnl)}</span></td>
+            </tr>
+        `;
+    }).join('');
+    
+    tbody.innerHTML = tradeRows;
+}
+
+function controlBot(action) {
+    const endpoint = action === 'start' ? '/api/trigger' : `/api/${action}`;
+    
+    fetch(endpoint, { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                showAlert(data.error, 'danger');
+            } else {
+                showAlert(data.message, 'success');
+                loadDashboardData(); // Refresh data
+            }
+        })
+        .catch(error => {
+            console.error('Error controlling bot:', error);
+            showAlert('Error controlling bot', 'danger');
+        });
+}
+</script>
+{% endblock %}

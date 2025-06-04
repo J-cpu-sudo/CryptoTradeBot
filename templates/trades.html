@@ -1,0 +1,302 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="fas fa-exchange-alt me-2"></i>Trade History
+                </h5>
+                <div class="d-flex gap-2">
+                    <select id="status-filter" class="form-select form-select-sm" style="width: auto;">
+                        <option value="">All Status</option>
+                        <option value="executed">Executed</option>
+                        <option value="pending">Pending</option>
+                        <option value="cancelled">Cancelled</option>
+                        <option value="failed">Failed</option>
+                    </select>
+                    <button class="btn btn-outline-primary btn-sm" onclick="loadTrades()">
+                        <i class="fas fa-sync-alt me-1"></i>Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Timestamp</th>
+                                <th>Type</th>
+                                <th>Symbol</th>
+                                <th>Quantity</th>
+                                <th>Price</th>
+                                <th>Status</th>
+                                <th>P&L</th>
+                                <th>Risk Amount</th>
+                                <th>Notes</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="trades-table-body">
+                            <tr>
+                                <td colspan="11" class="text-center">
+                                    <div class="spinner-border" role="status">
+                                        <span class="visually-hidden">Loading...</span>
+                                    </div>
+                                    <p class="mt-2">Loading trades...</p>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Pagination -->
+                <nav aria-label="Trade history pagination">
+                    <ul id="pagination" class="pagination justify-content-center">
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Trade Details Modal -->
+<div class="modal fade" id="tradeModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Trade Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="trade-details">
+                    <!-- Trade details will be loaded here -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentPage = 1;
+let currentStatus = '';
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadTrades();
+    
+    // Set up status filter
+    document.getElementById('status-filter').addEventListener('change', function() {
+        currentStatus = this.value;
+        currentPage = 1;
+        loadTrades();
+    });
+});
+
+function loadTrades(page = 1) {
+    currentPage = page;
+    
+    let url = `/api/trades?page=${page}&per_page=20`;
+    if (currentStatus) {
+        url += `&status=${currentStatus}`;
+    }
+    
+    fetch(url)
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                showAlert('Error loading trades: ' + data.error, 'danger');
+                return;
+            }
+            
+            updateTradesTable(data.trades);
+            updatePagination(data);
+        })
+        .catch(error => {
+            console.error('Error loading trades:', error);
+            showAlert('Error loading trades', 'danger');
+        });
+}
+
+function updateTradesTable(trades) {
+    const tbody = document.getElementById('trades-table-body');
+    
+    if (!trades || trades.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="11" class="text-center text-muted">
+                    No trades found
+                </td>
+            </tr>
+        `;
+        return;
+    }
+    
+    const rows = trades.map(trade => {
+        const timestamp = new Date(trade.timestamp).toLocaleString();
+        const typeClass = trade.trade_type === 'buy' ? 'text-success' : 'text-danger';
+        const statusClass = getStatusClass(trade.status);
+        const pnlClass = trade.pnl >= 0 ? 'text-success' : 'text-danger';
+        
+        return `
+            <tr>
+                <td>${trade.id}</td>
+                <td>${timestamp}</td>
+                <td>
+                    <span class="${typeClass}">
+                        <i class="fas fa-arrow-${trade.trade_type === 'buy' ? 'up' : 'down'} me-1"></i>
+                        ${trade.trade_type.toUpperCase()}
+                    </span>
+                </td>
+                <td><strong>${trade.symbol}</strong></td>
+                <td>${trade.quantity}</td>
+                <td>${formatCurrency(trade.price)}</td>
+                <td>
+                    <span class="badge ${statusClass}">
+                        ${trade.status.toUpperCase()}
+                    </span>
+                </td>
+                <td>
+                    <span class="${pnlClass}">
+                        ${formatCurrency(trade.pnl)}
+                    </span>
+                </td>
+                <td>${formatCurrency(trade.risk_amount || 0)}</td>
+                <td>
+                    ${trade.notes ? 
+                        `<span class="text-truncate" style="max-width: 100px;" title="${trade.notes}">${trade.notes}</span>` : 
+                        '-'
+                    }
+                </td>
+                <td>
+                    <button class="btn btn-outline-primary btn-sm" onclick="showTradeDetails(${trade.id})">
+                        <i class="fas fa-eye"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+    
+    tbody.innerHTML = rows;
+}
+
+function updatePagination(data) {
+    const pagination = document.getElementById('pagination');
+    
+    if (data.pages <= 1) {
+        pagination.innerHTML = '';
+        return;
+    }
+    
+    let paginationHTML = '';
+    
+    // Previous button
+    if (data.has_prev) {
+        paginationHTML += `
+            <li class="page-item">
+                <a class="page-link" href="#" onclick="loadTrades(${data.current_page - 1})">
+                    <i class="fas fa-chevron-left"></i>
+                </a>
+            </li>
+        `;
+    }
+    
+    // Page numbers
+    const startPage = Math.max(1, data.current_page - 2);
+    const endPage = Math.min(data.pages, data.current_page + 2);
+    
+    if (startPage > 1) {
+        paginationHTML += `
+            <li class="page-item">
+                <a class="page-link" href="#" onclick="loadTrades(1)">1</a>
+            </li>
+        `;
+        if (startPage > 2) {
+            paginationHTML += `<li class="page-item disabled"><span class="page-link">...</span></li>`;
+        }
+    }
+    
+    for (let i = startPage; i <= endPage; i++) {
+        paginationHTML += `
+            <li class="page-item ${i === data.current_page ? 'active' : ''}">
+                <a class="page-link" href="#" onclick="loadTrades(${i})">${i}</a>
+            </li>
+        `;
+    }
+    
+    if (endPage < data.pages) {
+        if (endPage < data.pages - 1) {
+            paginationHTML += `<li class="page-item disabled"><span class="page-link">...</span></li>`;
+        }
+        paginationHTML += `
+            <li class="page-item">
+                <a class="page-link" href="#" onclick="loadTrades(${data.pages})">${data.pages}</a>
+            </li>
+        `;
+    }
+    
+    // Next button
+    if (data.has_next) {
+        paginationHTML += `
+            <li class="page-item">
+                <a class="page-link" href="#" onclick="loadTrades(${data.current_page + 1})">
+                    <i class="fas fa-chevron-right"></i>
+                </a>
+            </li>
+        `;
+    }
+    
+    pagination.innerHTML = paginationHTML;
+}
+
+function getStatusClass(status) {
+    const classes = {
+        'executed': 'bg-success',
+        'pending': 'bg-warning',
+        'cancelled': 'bg-secondary',
+        'failed': 'bg-danger'
+    };
+    return classes[status] || 'bg-secondary';
+}
+
+function showTradeDetails(tradeId) {
+    // For now, we'll show a simple alert
+    // In a full implementation, you'd fetch detailed trade info
+    const modal = new bootstrap.Modal(document.getElementById('tradeModal'));
+    
+    document.getElementById('trade-details').innerHTML = `
+        <div class="text-center">
+            <div class="spinner-border" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">Loading trade details...</p>
+        </div>
+    `;
+    
+    modal.show();
+    
+    // Simulate loading trade details
+    setTimeout(() => {
+        document.getElementById('trade-details').innerHTML = `
+            <div class="alert alert-info">
+                <h6>Trade ID: ${tradeId}</h6>
+                <p>Detailed trade information would be displayed here, including:</p>
+                <ul>
+                    <li>Complete order history</li>
+                    <li>Market conditions at time of trade</li>
+                    <li>Risk management details</li>
+                    <li>Signal analysis that triggered the trade</li>
+                    <li>Fees and execution details</li>
+                </ul>
+            </div>
+        `;
+    }, 1000);
+}
+</script>
+{% endblock %}

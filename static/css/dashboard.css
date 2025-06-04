@@ -1,0 +1,370 @@
+/* Custom CSS for the trading bot dashboard */
+
+/* Variables for consistent theming */
+:root {
+    --success-color: #28a745;
+    --danger-color: #dc3545;
+    --warning-color: #ffc107;
+    --info-color: #17a2b8;
+    --secondary-color: #6c757d;
+}
+
+/* General Layout */
+body {
+    font-size: 0.9rem;
+}
+
+.container-fluid {
+    max-width: 1400px;
+}
+
+/* Cards */
+.card {
+    border: none;
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.3);
+    margin-bottom: 1rem;
+}
+
+.card-header {
+    background-color: var(--bs-gray-800);
+    border-bottom: 1px solid var(--bs-gray-700);
+    font-weight: 600;
+}
+
+/* P&L Styling */
+.pnl-value {
+    font-weight: bold;
+}
+
+.pnl-positive {
+    color: var(--success-color) !important;
+}
+
+.pnl-negative {
+    color: var(--danger-color) !important;
+}
+
+/* Status Indicators */
+.status-indicator {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.375rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+.status-running {
+    background-color: rgba(40, 167, 69, 0.1);
+    color: var(--success-color);
+    border: 1px solid rgba(40, 167, 69, 0.3);
+}
+
+.status-stopped {
+    background-color: rgba(220, 53, 69, 0.1);
+    color: var(--danger-color);
+    border: 1px solid rgba(220, 53, 69, 0.3);
+}
+
+.status-paused {
+    background-color: rgba(255, 193, 7, 0.1);
+    color: var(--warning-color);
+    border: 1px solid rgba(255, 193, 7, 0.3);
+}
+
+.status-error {
+    background-color: rgba(220, 53, 69, 0.2);
+    color: var(--danger-color);
+    border: 1px solid rgba(220, 53, 69, 0.5);
+}
+
+/* Indicator Grid */
+.indicator-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+}
+
+.indicator-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem;
+    background-color: var(--bs-gray-800);
+    border-radius: 0.375rem;
+    border: 1px solid var(--bs-gray-700);
+}
+
+.indicator-label {
+    font-weight: 500;
+    color: var(--bs-gray-300);
+}
+
+.indicator-value {
+    font-weight: 600;
+    color: var(--bs-white);
+}
+
+/* Activity Log */
+.activity-log {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.activity-item {
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--bs-gray-700);
+    margin-bottom: 0.5rem;
+}
+
+.activity-item:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+}
+
+.activity-item p {
+    margin-bottom: 0.25rem;
+    font-size: 0.875rem;
+}
+
+/* Trade Table Styling */
+.table {
+    font-size: 0.875rem;
+}
+
+.table th {
+    border-top: none;
+    border-bottom: 2px solid var(--bs-gray-700);
+    font-weight: 600;
+    color: var(--bs-gray-300);
+    background-color: var(--bs-gray-800);
+}
+
+.table td {
+    border-top: 1px solid var(--bs-gray-700);
+    vertical-align: middle;
+}
+
+.table-hover tbody tr:hover {
+    background-color: var(--bs-gray-800);
+}
+
+/* Control Buttons */
+.btn-group .btn {
+    font-size: 0.875rem;
+    padding: 0.375rem 0.75rem;
+}
+
+.btn-group .btn i {
+    font-size: 0.8rem;
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+    .indicator-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .card-header .btn-group {
+        flex-direction: column;
+        width: 100%;
+    }
+    
+    .card-header .btn-group .btn {
+        margin-bottom: 0.25rem;
+    }
+    
+    .table-responsive {
+        font-size: 0.8rem;
+    }
+}
+
+/* Chart Container */
+.chart-container {
+    position: relative;
+    height: 300px;
+    margin: 1rem 0;
+}
+
+/* Configuration Page Styling */
+.config-item {
+    padding: 0.75rem;
+    margin-bottom: 1rem;
+    background-color: var(--bs-gray-800);
+    border-radius: 0.375rem;
+    border: 1px solid var(--bs-gray-700);
+}
+
+.config-item:last-child {
+    margin-bottom: 0;
+}
+
+.info-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--bs-gray-700);
+}
+
+.info-item:last-child {
+    border-bottom: none;
+}
+
+/* Metric Items */
+.metric-item {
+    text-align: center;
+    padding: 1rem;
+    background-color: var(--bs-gray-800);
+    border-radius: 0.375rem;
+    border: 1px solid var(--bs-gray-700);
+}
+
+.metric-item h6 {
+    color: var(--bs-gray-300);
+    margin-bottom: 0.5rem;
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+}
+
+.metric-item .h5 {
+    margin-bottom: 0;
+    font-weight: 700;
+}
+
+/* Loading States */
+.loading-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    color: var(--bs-gray-400);
+}
+
+.loading-state .spinner-border {
+    margin-right: 0.5rem;
+}
+
+/* Alert Positioning */
+.alert-container {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 1050;
+    max-width: 400px;
+}
+
+/* Custom Badge Styles */
+.badge {
+    font-size: 0.75rem;
+    padding: 0.35em 0.65em;
+}
+
+/* Form Styling */
+.form-control, .form-select {
+    background-color: var(--bs-gray-800);
+    border-color: var(--bs-gray-600);
+    color: var(--bs-white);
+}
+
+.form-control:focus, .form-select:focus {
+    background-color: var(--bs-gray-800);
+    border-color: var(--bs-primary);
+    color: var(--bs-white);
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
+
+.form-text {
+    color: var(--bs-gray-400);
+    font-size: 0.8rem;
+}
+
+/* Navigation Improvements */
+.navbar-brand {
+    font-weight: 700;
+    font-size: 1.1rem;
+}
+
+.nav-link {
+    font-weight: 500;
+    padding: 0.5rem 1rem !important;
+}
+
+.nav-link.active {
+    background-color: var(--bs-primary);
+    border-radius: 0.375rem;
+}
+
+/* Pagination Styling */
+.pagination .page-link {
+    background-color: var(--bs-gray-800);
+    border-color: var(--bs-gray-600);
+    color: var(--bs-white);
+}
+
+.pagination .page-link:hover {
+    background-color: var(--bs-gray-700);
+    border-color: var(--bs-gray-500);
+    color: var(--bs-white);
+}
+
+.pagination .page-item.active .page-link {
+    background-color: var(--bs-primary);
+    border-color: var(--bs-primary);
+}
+
+/* Modal Styling */
+.modal-content {
+    background-color: var(--bs-gray-900);
+    border-color: var(--bs-gray-700);
+}
+
+.modal-header {
+    border-bottom-color: var(--bs-gray-700);
+}
+
+.modal-footer {
+    border-top-color: var(--bs-gray-700);
+}
+
+/* Scrollbar Styling for Webkit */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bs-gray-800);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--bs-gray-600);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--bs-gray-500);
+}
+
+/* Utility Classes */
+.text-truncate-custom {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 150px;
+}
+
+.border-start-success {
+    border-left: 4px solid var(--success-color) !important;
+}
+
+.border-start-danger {
+    border-left: 4px solid var(--danger-color) !important;
+}
+
+.border-start-warning {
+    border-left: 4px solid var(--warning-color) !important;
+}
