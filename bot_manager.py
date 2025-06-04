@@ -168,25 +168,31 @@ class BotManager:
             return
         
         try:
-            self.last_run = datetime.utcnow()
+            # Get Flask app context from context manager
+            from context_manager import get_app_instance
+            app = get_app_instance()
             
-            # Apply error recovery decorator to the trading cycle
-            @self.error_recovery.with_retry(max_retries=3)
-            @self.error_recovery.circuit_breaker('trading_cycle')
-            def execute_trading_cycle():
-                if not self._check_cooldown():
-                    return {'action': 'hold', 'message': 'Cooldown period active'}
+            # Execute within Flask application context
+            with app.app_context():
+                self.last_run = datetime.utcnow()
                 
-                if not self._check_daily_limit():
-                    return {'action': 'hold', 'message': 'Daily trade limit reached'}
-                
-                # Run the enhanced trading cycle
-                result = run_bot_cycle(
-                    trader=self.trader,
-                    risk_manager=self.risk_manager,
-                    market_analyzer=self.market_analyzer,
-                    db=self.db
-                )
+                # Apply error recovery decorator to the trading cycle
+                @self.error_recovery.with_retry(max_retries=3)
+                @self.error_recovery.circuit_breaker('trading_cycle')
+                def execute_trading_cycle():
+                    if not self._check_cooldown():
+                        return {'action': 'hold', 'message': 'Cooldown period active'}
+                    
+                    if not self._check_daily_limit():
+                        return {'action': 'hold', 'message': 'Daily trade limit reached'}
+                    
+                    # Run the enhanced trading cycle
+                    result = run_bot_cycle(
+                        trader=self.trader,
+                        risk_manager=self.risk_manager,
+                        market_analyzer=self.market_analyzer,
+                        db=self.db
+                    )
                 
                 # Add trailing stops for executed trades
                 if result.get('action') in ['buy', 'sell'] and result.get('trade_id'):
