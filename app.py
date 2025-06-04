@@ -59,6 +59,9 @@ with app.app_context():
     from context_manager import set_app_instance
     set_app_instance(app)
     
+    # Initialize autonomous trading fix
+    import autonomous_context_fix
+    
     # Initialize enhanced bot manager
     from bot_manager import BotManager
     bot_manager = BotManager(db, scheduler)

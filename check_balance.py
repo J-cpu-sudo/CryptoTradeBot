@@ -12,7 +12,7 @@ def get_okx_balance():
     # API credentials
     api_key = "f43547e4-0331-4114-881a-c92b9e4d7d95"
     secret_key = "0E1161EECD34F8FB117F4D1A06587AF8"
-    passphrase = "kongoni"
+    passphrase = "Kongoni3491$"
     
     # API endpoint
     endpoint = "/api/v5/account/balance"
