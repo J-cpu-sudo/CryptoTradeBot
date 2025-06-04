@@ -55,6 +55,10 @@ with app.app_context():
     # Create all database tables
     db.create_all()
     
+    # Set up context manager
+    from context_manager import set_app_instance
+    set_app_instance(app)
+    
     # Initialize enhanced bot manager
     from bot_manager import BotManager
     bot_manager = BotManager(db, scheduler)
@@ -74,18 +78,26 @@ with app.app_context():
     websocket_manager = WebSocketManager()
     app.websocket_manager = websocket_manager
     
-    # Start WebSocket feed in background
+    # Start WebSocket feed in background with context
     def start_websocket_feed():
         try:
-            # Add callback for real-time dashboard updates
-            websocket_manager.add_callback(dashboard_manager.broadcast_market_update)
-            websocket_manager.start(["BTC-USDT"])
-            logging.info("WebSocket price feed started")
+            with app.app_context():
+                # Add callback for real-time dashboard updates
+                websocket_manager.add_callback(dashboard_manager.broadcast_market_update)
+                websocket_manager.start(["BTC-USDT"])
+                logging.info("WebSocket price feed started")
         except Exception as e:
             logging.error(f"Failed to start WebSocket feed: {e}")
     
     # Start WebSocket feed in separate thread
     websocket_thread = threading.Thread(target=start_websocket_feed, daemon=True)
     websocket_thread.start()
+    
+    # Apply deployment fixes for context errors
+    try:
+        import deployment_fix
+        logging.info("Deployment fixes applied successfully")
+    except Exception as e:
+        logging.warning(f"Deployment fix not applied: {e}")
     
     logging.info("Ultra-high performance trading system initialized")
