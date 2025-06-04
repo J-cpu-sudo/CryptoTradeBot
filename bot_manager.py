@@ -3,11 +3,13 @@ import time
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
-from models import BotConfig, BotLog, BotStatus
+from models import BotConfig, BotLog, BotStatus, Trade, TradeStatus
 from bot import run_bot_cycle
 from trader import Trader
 from risk_manager import RiskManager
 from market_analyzer import MarketAnalyzer
+from error_recovery import ErrorRecoveryManager
+from trailing_stop_manager import TrailingStopManager
 import json
 
 class BotManager:
@@ -18,15 +20,18 @@ class BotManager:
         self.trader = Trader()
         self.risk_manager = RiskManager(db)
         self.market_analyzer = MarketAnalyzer()
+        self.error_recovery = ErrorRecoveryManager(db)
+        self.trailing_stop_manager = TrailingStopManager(db, self.trader)
         self.last_run = None
         self.error_count = 0
         self.max_errors = 5
         self.job_id = 'trading_bot_job'
+        self.trailing_stop_job_id = 'trailing_stop_job'
         
-        # Initialize default configuration
+        # Initialize default configuration with enhanced parameters
         self._init_default_config()
         
-        logging.info("BotManager initialized")
+        logging.info("BotManager initialized with autonomous features")
     
     def _init_default_config(self):
         """Initialize default bot configuration"""
@@ -40,6 +45,12 @@ class BotManager:
             ('stop_loss_percent', '2.0', 'Stop loss percentage'),
             ('take_profit_percent', '4.0', 'Take profit percentage'),
             ('cooldown_minutes', '15', 'Cooldown between trades (minutes)'),
+            ('trailing_stops_enabled', 'true', 'Enable trailing stop losses'),
+            ('trail_distance_percent', '2.0', 'Trailing stop distance percentage'),
+            ('auto_recovery_enabled', 'true', 'Enable automatic error recovery'),
+            ('market_filter_enabled', 'true', 'Enable advanced market filtering'),
+            ('min_volume_ratio', '0.5', 'Minimum volume ratio for trading'),
+            ('max_volatility_percentile', '85', 'Maximum volatility percentile'),
         ]
         
         for key, value, description in default_configs:
@@ -54,7 +65,7 @@ class BotManager:
             self.db.session.rollback()
     
     def start(self) -> bool:
-        """Start the trading bot"""
+        """Start the autonomous trading bot with enhanced features"""
         try:
             if self.status == BotStatus.RUNNING:
                 self.log("WARNING", "Bot is already running")
@@ -65,19 +76,38 @@ class BotManager:
                 self.log("WARNING", "Trading is disabled in configuration")
                 return False
             
-            # Add scheduled job
+            # Perform health check before starting
+            health_status = self.error_recovery.health_check()
+            if health_status['overall_status'] == 'unhealthy':
+                self.log("ERROR", "System health check failed - cannot start bot")
+                return False
+            elif health_status['overall_status'] == 'degraded':
+                self.log("WARNING", "System health is degraded but starting anyway")
+            
+            # Add main trading cycle job
             if not self.scheduler.get_job(self.job_id):
                 self.scheduler.add_job(
-                    func=self._run_cycle,
+                    func=self._run_enhanced_cycle,
                     trigger="interval",
                     seconds=60,  # Run every minute
                     id=self.job_id,
-                    name="Trading Bot Cycle"
+                    name="Autonomous Trading Bot Cycle"
+                )
+            
+            # Add trailing stop management job
+            trailing_stops_enabled = BotConfig.get_value('trailing_stops_enabled', 'true').lower() == 'true'
+            if trailing_stops_enabled and not self.scheduler.get_job(self.trailing_stop_job_id):
+                self.scheduler.add_job(
+                    func=self._manage_trailing_stops,
+                    trigger="interval",
+                    seconds=15,  # Check trailing stops every 15 seconds
+                    id=self.trailing_stop_job_id,
+                    name="Trailing Stop Manager"
                 )
             
             self.status = BotStatus.RUNNING
             self.error_count = 0
-            self.log("INFO", "Trading bot started")
+            self.log("INFO", "Autonomous trading bot started with enhanced features")
             return True
             
         except Exception as e:
@@ -86,13 +116,18 @@ class BotManager:
             return False
     
     def stop(self) -> bool:
-        """Stop the trading bot"""
+        """Stop the autonomous trading bot and all related jobs"""
         try:
+            # Stop main trading cycle
             if self.scheduler.get_job(self.job_id):
                 self.scheduler.remove_job(self.job_id)
             
+            # Stop trailing stop management
+            if self.scheduler.get_job(self.trailing_stop_job_id):
+                self.scheduler.remove_job(self.trailing_stop_job_id)
+            
             self.status = BotStatus.STOPPED
-            self.log("INFO", "Trading bot stopped")
+            self.log("INFO", "Autonomous trading bot stopped")
             return True
             
         except Exception as e:
@@ -127,49 +162,121 @@ class BotManager:
             self.log("ERROR", f"Failed to resume bot: {str(e)}")
             return False
     
-    def _run_cycle(self):
-        """Execute one trading cycle"""
+    def _run_enhanced_cycle(self):
+        """Execute one enhanced autonomous trading cycle with error recovery"""
         if self.status != BotStatus.RUNNING:
             return
         
         try:
             self.last_run = datetime.utcnow()
             
-            # Check cooldown
-            if not self._check_cooldown():
-                return
+            # Apply error recovery decorator to the trading cycle
+            @self.error_recovery.with_retry(max_retries=3)
+            @self.error_recovery.circuit_breaker('trading_cycle')
+            def execute_trading_cycle():
+                if not self._check_cooldown():
+                    return {'action': 'hold', 'message': 'Cooldown period active'}
+                
+                if not self._check_daily_limit():
+                    return {'action': 'hold', 'message': 'Daily trade limit reached'}
+                
+                # Run the enhanced trading cycle
+                result = run_bot_cycle(
+                    trader=self.trader,
+                    risk_manager=self.risk_manager,
+                    market_analyzer=self.market_analyzer,
+                    db=self.db
+                )
+                
+                # Add trailing stops for executed trades
+                if result.get('action') in ['buy', 'sell'] and result.get('trade_id'):
+                    trailing_enabled = BotConfig.get_value('trailing_stops_enabled', 'true')
+                    if trailing_enabled and trailing_enabled.lower() == 'true':
+                        trail_distance = float(BotConfig.get_value('trail_distance_percent', '2.0')) / 100
+                        self.trailing_stop_manager.add_trailing_stop(
+                            result['trade_id'], 
+                            trail_distance
+                        )
+                        self.log("INFO", f"Added trailing stop for trade {result['trade_id']}")
+                
+                return result
             
-            # Check daily trade limit
-            if not self._check_daily_limit():
-                self.log("WARNING", "Daily trade limit reached")
-                return
-            
-            # Run the trading cycle
-            result = run_bot_cycle(
-                trader=self.trader,
-                risk_manager=self.risk_manager,
-                market_analyzer=self.market_analyzer,
-                db=self.db
-            )
+            # Execute the cycle with error recovery
+            result = execute_trading_cycle()
             
             if result.get('error'):
                 self.error_count += 1
                 self.log("ERROR", f"Trading cycle error: {result['error']}")
                 
-                if self.error_count >= self.max_errors:
+                # Try to recover from specific error types
+                recovery_success = self.error_recovery.recover_from_error(
+                    'trading_cycle_error', 
+                    {'error': result['error'], 'timestamp': datetime.utcnow()}
+                )
+                
+                if not recovery_success and self.error_count >= self.max_errors:
+                    self.log("ERROR", f"Max errors ({self.max_errors}) reached. Stopping bot.")
                     self.status = BotStatus.ERROR
-                    self.log("ERROR", f"Bot stopped due to {self.max_errors} consecutive errors")
+                    self.stop()
             else:
                 self.error_count = 0  # Reset error count on success
-                if result.get('action'):
-                    self.log("INFO", f"Trading action: {result['action']}")
+                
+                if result.get('action') != 'hold':
+                    self.log("INFO", f"Trading action: {result.get('action')} - {result.get('message', '')}")
+                    
+                    # Log market conditions for successful trades
+                    market_filter = result.get('market_filter', {})
+                    if market_filter:
+                        self.log("INFO", f"Market grade: {market_filter.get('market_grade', 'Unknown')}")
             
         except Exception as e:
             self.error_count += 1
-            self.log("ERROR", f"Unexpected error in trading cycle: {str(e)}")
+            self.log("ERROR", f"Enhanced cycle execution error: {str(e)}")
             
-            if self.error_count >= self.max_errors:
+            # Attempt error recovery
+            recovery_success = self.error_recovery.recover_from_error(
+                'cycle_exception', 
+                {'error': str(e), 'timestamp': datetime.utcnow()}
+            )
+            
+            if not recovery_success and self.error_count >= self.max_errors:
+                self.log("ERROR", f"Max errors ({self.max_errors}) reached. Stopping bot.")
                 self.status = BotStatus.ERROR
+                self.stop()
+    
+    def _manage_trailing_stops(self):
+        """Manage trailing stop losses for all active positions"""
+        try:
+            if self.status != BotStatus.RUNNING:
+                return
+            
+            # Update all trailing stops
+            updates = self.trailing_stop_manager.update_trailing_stops()
+            
+            # Log any triggered stops
+            for update in updates:
+                if update.get('triggered'):
+                    self.log("INFO", f"Trailing stop triggered for trade {update['trade_id']} at {update['trigger_price']}")
+                    
+                    # Update trade status in database
+                    trade = Trade.query.get(update['trade_id'])
+                    if trade:
+                        trade.status = TradeStatus.EXECUTED
+                        trade.pnl = update.get('pnl', 0.0)
+                        trade.notes = f"Trailing stop triggered at {update['trigger_price']}"
+                        self.db.session.commit()
+            
+            # Cleanup old trailing stops
+            cleaned = self.trailing_stop_manager.cleanup_expired_stops(max_age_hours=24)
+            if cleaned > 0:
+                self.log("DEBUG", f"Cleaned up {cleaned} expired trailing stops")
+        
+        except Exception as e:
+            self.log("ERROR", f"Trailing stop management error: {str(e)}")
+    
+    def _run_cycle(self):
+        """Legacy cycle method - redirects to enhanced cycle"""
+        self._run_enhanced_cycle()
     
     def _is_trading_enabled(self) -> bool:
         """Check if trading is enabled in configuration"""
