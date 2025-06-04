@@ -116,7 +116,7 @@ class AutonomousLiveTrader:
                     'bid': float(ticker['bidPx']),
                     'ask': float(ticker['askPx']),
                     'volume_24h': float(ticker['vol24h']),
-                    'change_24h': float(ticker['chg24h']),
+                    'change_24h': float(ticker.get('chg24h', '0')),
                     'high_24h': float(ticker['high24h']),
                     'low_24h': float(ticker['low24h']),
                     'candles': candles,
