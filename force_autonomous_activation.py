@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Force Autonomous Trading Activation - Execute immediate trade to activate the autonomous system
+Force Autonomous Activation - Immediate trade execution with aggressive parameters
 """
 import os
 import requests
@@ -8,27 +8,33 @@ import json
 import hmac
 import hashlib
 import base64
+import time
 from datetime import datetime, timezone
 
-def force_autonomous_trade():
-    """Force an immediate autonomous trade to activate the system"""
-    api_key = os.environ.get('OKX_API_KEY')
-    secret_key = os.environ.get('OKX_SECRET_KEY')
-    passphrase = os.environ.get('OKX_PASSPHRASE')
+def force_immediate_execution():
+    print("FORCING IMMEDIATE AUTONOMOUS EXECUTION")
+    print("=" * 50)
+    
+    api_key = str(os.environ.get('OKX_API_KEY', ''))
+    secret_key = str(os.environ.get('OKX_SECRET_KEY', ''))
+    passphrase = str(os.environ.get('OKX_PASSPHRASE', ''))
     base_url = 'https://www.okx.com'
     
-    def generate_signature(timestamp, method, request_path, body=''):
-        message = timestamp + method + request_path + body
-        mac = hmac.new(
-            bytes(secret_key, encoding='utf8'),
-            bytes(message, encoding='utf-8'),
-            digestmod=hashlib.sha256
-        )
-        return base64.b64encode(mac.digest()).decode()
+    def get_timestamp():
+        return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
     
-    def get_headers(method, request_path, body=''):
-        timestamp = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
-        signature = generate_signature(timestamp, method, request_path, body)
+    def create_signature(timestamp, method, path, body=''):
+        message = timestamp + method + path + body
+        signature = hmac.new(
+            secret_key.encode('utf-8'),
+            message.encode('utf-8'),
+            hashlib.sha256
+        ).digest()
+        return base64.b64encode(signature).decode('utf-8')
+    
+    def get_headers(method, path, body=''):
+        timestamp = get_timestamp()
+        signature = create_signature(timestamp, method, path, body)
         
         return {
             'OK-ACCESS-KEY': api_key,
@@ -38,115 +44,129 @@ def force_autonomous_trade():
             'Content-Type': 'application/json'
         }
     
-    print("🚀 FORCING AUTONOMOUS TRADE ACTIVATION")
-    print("=" * 50)
+    def api_request(method, endpoint, body=None):
+        try:
+            headers = get_headers(method, endpoint, body or '')
+            url = base_url + endpoint
+            
+            if method == 'GET':
+                response = requests.get(url, headers=headers, timeout=10)
+            else:
+                response = requests.post(url, headers=headers, data=body, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('code') == '0':
+                    return data
+            
+            return None
+        except Exception as e:
+            print(f"API Error: {e}")
+            return None
+    
+    def get_balance():
+        data = api_request('GET', '/api/v5/account/balance')
+        if data:
+            for detail in data['data'][0]['details']:
+                if detail['ccy'] == 'USDT':
+                    return float(detail['availBal'])
+        return 0
+    
+    def execute_aggressive_trade(symbol, amount):
+        # Get current price
+        ticker_data = api_request('GET', f'/api/v5/market/ticker?instId={symbol}')
+        if not ticker_data:
+            return None
+        
+        price = float(ticker_data['data'][0]['last'])
+        
+        # Get instrument info
+        inst_data = api_request('GET', f'/api/v5/public/instruments?instType=SPOT&instId={symbol}')
+        if not inst_data:
+            return None
+        
+        min_size = float(inst_data['data'][0]['minSz'])
+        quantity = amount / price
+        
+        if quantity < min_size:
+            return None
+        
+        # Round to proper precision
+        quantity = round(quantity / min_size) * min_size
+        
+        order_data = {
+            "instId": symbol,
+            "tdMode": "cash",
+            "side": "buy",
+            "ordType": "market",
+            "sz": str(quantity)
+        }
+        
+        order_body = json.dumps(order_data)
+        result = api_request('POST', '/api/v5/trade/order', order_body)
+        
+        if result:
+            order_id = result['data'][0]['ordId']
+            print(f"TRADE EXECUTED: {symbol}")
+            print(f"  Quantity: {quantity}")
+            print(f"  Price: ${price}")
+            print(f"  Amount: ${amount}")
+            print(f"  Order ID: {order_id}")
+            return order_id
+        
+        return None
     
     # Get current balance
-    try:
-        path = '/api/v5/account/balance'
-        headers = get_headers('GET', path)
-        response = requests.get(base_url + path, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('code') == '0':
-                usdt_balance = 0.0
-                for detail in data['data'][0]['details']:
-                    if detail['ccy'] == 'USDT':
-                        usdt_balance = float(detail['availBal'])
-                        break
-                
-                print(f"Current USDT Balance: ${usdt_balance:.2f}")
-                
-                if usdt_balance >= 1.0:
-                    # Force trade with DOGE-USDT (lowest minimum requirements)
-                    symbol = 'DOGE-USDT'
-                    
-                    # Get current DOGE price
-                    price_response = requests.get(f'{base_url}/api/v5/market/ticker?instId={symbol}', timeout=10)
-                    if price_response.status_code == 200:
-                        price_data = price_response.json()
-                        if price_data.get('data'):
-                            current_price = float(price_data['data'][0]['last'])
-                            print(f"Current {symbol} Price: ${current_price:.6f}")
-                            
-                            # Calculate maximum possible trade
-                            trade_amount = min(usdt_balance * 0.9, 5.0)  # Use 90% or max $5
-                            quantity = trade_amount / current_price
-                            
-                            # Get instrument specs to adjust quantity
-                            inst_response = requests.get(f'{base_url}/api/v5/public/instruments?instType=SPOT&instId={symbol}', timeout=10)
-                            if inst_response.status_code == 200:
-                                inst_data = inst_response.json()
-                                if inst_data.get('data'):
-                                    instrument = inst_data['data'][0]
-                                    min_size = float(instrument.get('minSz', '0'))
-                                    lot_size = float(instrument.get('lotSz', '0'))
-                                    
-                                    if lot_size > 0:
-                                        quantity = int(quantity / lot_size) * lot_size
-                                    
-                                    print(f"Calculated Quantity: {quantity:.2f} DOGE")
-                                    print(f"Minimum Required: {min_size:.2f} DOGE")
-                                    print(f"Trade Value: ${quantity * current_price:.2f}")
-                                    
-                                    if quantity >= min_size:
-                                        # Execute the trade
-                                        order_data = {
-                                            "instId": symbol,
-                                            "tdMode": "cash",
-                                            "side": "buy",
-                                            "ordType": "market",
-                                            "sz": str(quantity)
-                                        }
-                                        
-                                        path = '/api/v5/trade/order'
-                                        body = json.dumps(order_data)
-                                        headers = get_headers('POST', path, body)
-                                        
-                                        print("\n🔥 EXECUTING FORCED AUTONOMOUS TRADE...")
-                                        trade_response = requests.post(base_url + path, headers=headers, data=body, timeout=10)
-                                        
-                                        if trade_response.status_code == 200:
-                                            result = trade_response.json()
-                                            if result.get('code') == '0':
-                                                order_id = result['data'][0]['ordId']
-                                                print("\n" + "=" * 60)
-                                                print("✅ AUTONOMOUS TRADE SUCCESSFULLY EXECUTED!")
-                                                print(f"Order ID: {order_id}")
-                                                print(f"Symbol: {symbol}")
-                                                print(f"Quantity: {quantity:.2f} DOGE")
-                                                print(f"Price: ${current_price:.6f}")
-                                                print(f"Total Value: ${quantity * current_price:.2f}")
-                                                print(f"Execution Time: {datetime.now().strftime('%H:%M:%S UTC')}")
-                                                print("🔄 AUTONOMOUS SYSTEM NOW ACTIVATED!")
-                                                print("=" * 60)
-                                                return True
-                                            else:
-                                                print(f"❌ Trade Failed: {result.get('msg', 'Unknown error')}")
-                                                print(f"Error Code: {result.get('code')}")
-                                        else:
-                                            print(f"❌ HTTP Error: {trade_response.status_code}")
-                                            try:
-                                                error_data = trade_response.json()
-                                                print(f"Error Details: {error_data}")
-                                            except:
-                                                print(f"Raw Response: {trade_response.text}")
-                                    else:
-                                        print(f"❌ Insufficient quantity. Need at least {min_size:.2f} DOGE")
-                                        print(f"Current calculation: {quantity:.2f} DOGE")
-                else:
-                    print(f"❌ Insufficient balance. Need at least $1.00 USDT")
-                    print(f"Current balance: ${usdt_balance:.2f}")
-            else:
-                print(f"❌ API Error: {data.get('msg', 'Unknown error')}")
-        else:
-            print(f"❌ HTTP Error: {response.status_code}")
-            
-    except Exception as e:
-        print(f"❌ Execution Error: {e}")
+    balance = get_balance()
+    print(f"Current USDT Balance: ${balance:.2f}")
     
-    return False
+    if balance < 1:
+        print("Insufficient balance for trading")
+        return
+    
+    # Aggressive trading symbols for immediate execution
+    aggressive_symbols = [
+        'PEPE-USDT',   # High volatility meme coin
+        'DOGE-USDT',   # Popular with good liquidity
+        'SHIB-USDT',   # High volume meme coin
+        'TRX-USDT',    # Good for quick trades
+        'ADA-USDT',    # Reliable altcoin
+        'XRP-USDT'     # High liquidity
+    ]
+    
+    trades_executed = 0
+    max_trades = 3  # Execute multiple trades for full automation
+    
+    for symbol in aggressive_symbols:
+        if balance < 1.5:
+            break
+        
+        if trades_executed >= max_trades:
+            break
+        
+        # Use 25-30% of available balance per trade
+        trade_amount = min(balance * 0.28, balance - 1)  # Keep $1 buffer
+        
+        if trade_amount >= 1:
+            print(f"\nExecuting aggressive trade: {symbol}")
+            order_id = execute_aggressive_trade(symbol, trade_amount)
+            
+            if order_id:
+                trades_executed += 1
+                balance -= trade_amount
+                print(f"SUCCESS - Remaining balance: ${balance:.2f}")
+                time.sleep(2)  # Brief pause between trades
+            else:
+                print(f"FAILED - Trying next symbol")
+    
+    print(f"\nAGGRESSIVE EXECUTION COMPLETE")
+    print(f"Trades executed: {trades_executed}")
+    print(f"Remaining balance: ${balance:.2f}")
+    
+    if trades_executed > 0:
+        print("AUTONOMOUS TRADING NOW FULLY ACTIVE")
+    else:
+        print("NO TRADES EXECUTED - INVESTIGATING ISSUES")
 
 if __name__ == "__main__":
-    force_autonomous_trade()
+    force_immediate_execution()
