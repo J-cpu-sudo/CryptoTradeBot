@@ -1,35 +1,36 @@
 #!/usr/bin/env python3
 """
-Find cryptocurrency pairs with minimum order requirements that match available balance
+Find Tradeable Pairs - Discover trading pairs that work with current balance
 """
 import os
+import requests
+import json
 import hmac
 import hashlib
 import base64
-import json
-import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
-def find_suitable_pairs():
-    """Find trading pairs with low minimum order requirements"""
-    
-    api_key = os.getenv('OKX_API_KEY')
-    secret_key = os.getenv('OKX_SECRET_KEY') 
-    passphrase = os.getenv('OKX_PASSPHRASE')
+def find_tradeable_pairs():
+    api_key = str(os.environ.get('OKX_API_KEY', ''))
+    secret_key = str(os.environ.get('OKX_SECRET_KEY', ''))
+    passphrase = str(os.environ.get('OKX_PASSPHRASE', ''))
     base_url = 'https://www.okx.com'
     
-    def generate_signature(timestamp, method, request_path, body=''):
-        message = timestamp + method + request_path + body
-        mac = hmac.new(
-            bytes(secret_key, encoding='utf8'),
-            bytes(message, encoding='utf-8'),
-            digestmod=hashlib.sha256
-        )
-        return base64.b64encode(mac.digest()).decode()
-
-    def get_headers(method, request_path, body=''):
-        timestamp = datetime.utcnow().isoformat()[:-3] + 'Z'
-        signature = generate_signature(timestamp, method, request_path, body)
+    def get_timestamp():
+        return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+    
+    def create_signature(timestamp, method, path, body=''):
+        message = timestamp + method + path + body
+        signature = hmac.new(
+            secret_key.encode('utf-8'),
+            message.encode('utf-8'),
+            hashlib.sha256
+        ).digest()
+        return base64.b64encode(signature).decode('utf-8')
+    
+    def get_headers(method, path, body=''):
+        timestamp = get_timestamp()
+        signature = create_signature(timestamp, method, path, body)
         
         return {
             'OK-ACCESS-KEY': api_key,
@@ -38,155 +39,81 @@ def find_suitable_pairs():
             'OK-ACCESS-PASSPHRASE': passphrase,
             'Content-Type': 'application/json'
         }
-
-    # Check small-cap cryptocurrencies with lower minimum requirements
-    test_pairs = [
-        "SHIB-USDT",  # Shiba Inu - very small units
-        "PEPE-USDT",  # PEPE - micro pricing
-        "FLOKI-USDT", # Floki - small minimum
-        "BONK-USDT",  # Bonk - micro cap
-        "DOGE-USDT",  # Dogecoin
-        "XRP-USDT",   # Ripple
-        "TRX-USDT",   # Tron
-    ]
     
-    suitable_pairs = []
+    # Get current balance
+    headers = get_headers('GET', '/api/v5/account/balance')
+    response = requests.get(base_url + '/api/v5/account/balance', headers=headers)
     
-    for pair in test_pairs:
+    usdt_balance = 0.0
+    if response.status_code == 200:
+        data = response.json()
+        if data.get('code') == '0':
+            for detail in data['data'][0]['details']:
+                if detail['ccy'] == 'USDT':
+                    usdt_balance = float(detail['availBal'])
+                    break
+    
+    print(f"Current USDT balance: ${usdt_balance:.8f}")
+    
+    # Get all USDT trading pairs
+    response = requests.get(base_url + '/api/v5/public/instruments?instType=SPOT')
+    if response.status_code != 200:
+        print("Failed to get instruments")
+        return
+    
+    instruments = response.json()['data']
+    usdt_pairs = [inst for inst in instruments if inst['quoteCcy'] == 'USDT' and inst['state'] == 'live']
+    
+    print(f"Found {len(usdt_pairs)} active USDT trading pairs")
+    print("\nScanning for tradeable pairs...")
+    
+    tradeable_pairs = []
+    
+    for inst in usdt_pairs:
+        symbol = inst['instId']
+        min_size = float(inst['minSz'])
+        tick_size = float(inst['tickSz'])
+        
         try:
-            # Get instrument info
-            instrument_response = requests.get(f'{base_url}/api/v5/public/instruments?instType=SPOT&instId={pair}')
-            if instrument_response.status_code != 200:
-                continue
-                
-            instrument_data = instrument_response.json()
-            if not instrument_data.get('data'):
-                continue
-                
-            instrument = instrument_data['data'][0]
-            min_size = float(instrument.get('minSz', '0'))
-            
             # Get current price
-            price_response = requests.get(f'{base_url}/api/v5/market/ticker?instId={pair}')
-            if price_response.status_code != 200:
-                continue
-                
-            price_data = price_response.json()
-            if not price_data.get('data'):
-                continue
-                
-            current_price = float(price_data['data'][0]['last'])
-            min_order_value = min_size * current_price
-            
-            print(f"{pair}:")
-            print(f"  Current Price: ${current_price:.8f}")
-            print(f"  Minimum Size: {min_size}")
-            print(f"  Minimum Order Value: ${min_order_value:.4f}")
-            
-            # Check if we can afford this pair
-            if min_order_value <= 0.5:  # Within our available balance
-                suitable_pairs.append({
-                    'pair': pair,
-                    'price': current_price,
-                    'min_size': min_size,
-                    'min_value': min_order_value
-                })
-                print(f"  ✓ TRADEABLE with available balance")
-            else:
-                print(f"  ✗ Requires ${min_order_value:.4f} minimum")
-            print()
-            
-        except Exception as e:
-            print(f"Error checking {pair}: {e}")
+            response = requests.get(f"{base_url}/api/v5/market/ticker?instId={symbol}")
+            if response.status_code == 200:
+                ticker_data = response.json()
+                if ticker_data.get('data'):
+                    price = float(ticker_data['data'][0]['last'])
+                    min_usdt = min_size * price
+                    
+                    if min_usdt <= usdt_balance * 0.95:  # 95% of balance to leave buffer
+                        volume_24h = float(ticker_data['data'][0]['vol24h'])
+                        change_24h = float(ticker_data['data'][0]['sodUtc8'])
+                        
+                        tradeable_pairs.append({
+                            'symbol': symbol,
+                            'price': price,
+                            'min_size': min_size,
+                            'min_usdt': min_usdt,
+                            'volume_24h': volume_24h,
+                            'change_24h': change_24h
+                        })
+        except:
+            continue
     
-    return suitable_pairs
-
-def execute_micro_trade(pair_info):
-    """Execute a micro trade with the most suitable pair"""
-    
-    api_key = os.getenv('OKX_API_KEY')
-    secret_key = os.getenv('OKX_SECRET_KEY') 
-    passphrase = os.getenv('OKX_PASSPHRASE')
-    base_url = 'https://www.okx.com'
-    
-    def generate_signature(timestamp, method, request_path, body=''):
-        message = timestamp + method + request_path + body
-        mac = hmac.new(
-            bytes(secret_key, encoding='utf8'),
-            bytes(message, encoding='utf-8'),
-            digestmod=hashlib.sha256
-        )
-        return base64.b64encode(mac.digest()).decode()
-
-    def get_headers(method, request_path, body=''):
-        timestamp = datetime.utcnow().isoformat()[:-3] + 'Z'
-        signature = generate_signature(timestamp, method, request_path, body)
+    if tradeable_pairs:
+        print(f"\nFound {len(tradeable_pairs)} tradeable pairs:")
+        print("=" * 80)
         
-        return {
-            'OK-ACCESS-KEY': api_key,
-            'OK-ACCESS-SIGN': signature,
-            'OK-ACCESS-TIMESTAMP': timestamp,
-            'OK-ACCESS-PASSPHRASE': passphrase,
-            'Content-Type': 'application/json'
-        }
-    
-    print(f"Executing live trade for {pair_info['pair']}...")
-    
-    # Use minimum size for the trade
-    order_data = {
-        "instId": pair_info['pair'],
-        "tdMode": "cash",
-        "side": "buy",
-        "ordType": "market",
-        "sz": str(pair_info['min_size'])
-    }
-    
-    path = '/api/v5/trade/order'
-    body = json.dumps(order_data)
-    headers = get_headers('POST', path, body)
-    
-    response = requests.post(base_url + path, headers=headers, data=body)
-    result = response.json()
-    
-    if result.get('code') == '0':
-        order_id = result['data'][0]['ordId']
-        print(f"FIRST LIVE TRADE EXECUTED SUCCESSFULLY!")
-        print(f"Order ID: {order_id}")
-        print(f"Symbol: {pair_info['pair']}")
-        print(f"Quantity: {pair_info['min_size']}")
-        print(f"Estimated Value: ${pair_info['min_value']:.4f}")
-        print(f"Price: ${pair_info['price']:.8f}")
-        return True
+        # Sort by minimum USDT requirement (ascending)
+        tradeable_pairs.sort(key=lambda x: x['min_usdt'])
+        
+        for pair in tradeable_pairs[:20]:  # Show top 20
+            print(f"{pair['symbol']:15} | Price: ${pair['price']:.8f} | "
+                  f"Min: ${pair['min_usdt']:.6f} | "
+                  f"Volume: {pair['volume_24h']:>12,.0f} | "
+                  f"Change: {pair['change_24h']:+6.2f}%")
     else:
-        print(f"Trade failed: {result}")
-        return False
+        print("\nNo tradeable pairs found with current balance")
+    
+    return tradeable_pairs
 
 if __name__ == "__main__":
-    print("Scanning for tradeable cryptocurrency pairs...")
-    print("=" * 50)
-    
-    suitable_pairs = find_suitable_pairs()
-    
-    if suitable_pairs:
-        print(f"Found {len(suitable_pairs)} suitable pairs for trading:")
-        
-        # Sort by minimum order value (cheapest first)
-        suitable_pairs.sort(key=lambda x: x['min_value'])
-        
-        for pair in suitable_pairs:
-            print(f"  {pair['pair']}: ${pair['min_value']:.4f} minimum")
-        
-        print("\nAttempting live trade with most affordable pair...")
-        best_pair = suitable_pairs[0]
-        
-        success = execute_micro_trade(best_pair)
-        
-        if success:
-            print("\nAUTONOMOUS TRADING SUCCESSFULLY INITIATED!")
-            print("First live trade completed - system now operational")
-        else:
-            print("\nContinuing in monitoring mode")
-            print("System ready for trades when market conditions allow")
-    else:
-        print("No suitable pairs found within current balance limits")
-        print("System continues in advanced monitoring mode")
+    find_tradeable_pairs()
