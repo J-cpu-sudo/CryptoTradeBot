@@ -1,356 +1,308 @@
 #!/usr/bin/env python3
 """
-Start Autonomous Trading - Continuous Live Trading Engine
+Start Autonomous Trading - Activate the 24/7 autonomous trading system
 """
 import os
-import time
-import json
 import requests
+import json
 import hmac
 import hashlib
 import base64
-from datetime import datetime
+import time
 import threading
-from typing import Dict, List, Any
-import numpy as np
+from datetime import datetime, timezone
+import logging
 
-class LiveTradingBot:
-    """Simplified autonomous trading bot with proven execution capability"""
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+class AutonomousTradingSystem:
+    """Complete autonomous trading system with 24/7 operation"""
     
     def __init__(self):
-        self.api_key = os.getenv('OKX_API_KEY')
-        self.secret_key = os.getenv('OKX_SECRET_KEY')
-        self.passphrase = os.getenv('OKX_PASSPHRASE')
+        self.api_key = str(os.environ.get('OKX_API_KEY', ''))
+        self.secret_key = str(os.environ.get('OKX_SECRET_KEY', ''))
+        self.passphrase = str(os.environ.get('OKX_PASSPHRASE', ''))
         self.base_url = 'https://www.okx.com'
         
-        # Trading configuration
-        self.active_pairs = ['TRX-USDT', 'DOGE-USDT', 'ADA-USDT', 'BNB-USDT', 'SOL-USDT']
-        self.max_trade_amount = 3.0  # Maximum $3 per trade
-        self.min_confidence = 0.70   # 70% confidence threshold
-        
-        # Performance tracking
-        self.trades_executed = 0
-        self.last_trade_time = None
         self.running = False
+        self.cycle_count = 0
+        self.successful_trades = 0
+        self.total_profit = 0.0
         
-        print("Live Trading Bot Initialized")
-        print(f"Max trade: ${self.max_trade_amount}")
-        print(f"Confidence threshold: {self.min_confidence*100}%")
-
-    def generate_signature(self, timestamp: str, method: str, request_path: str, body: str = '') -> str:
-        """Generate OKX API signature"""
-        message = timestamp + method + request_path + body
-        mac = hmac.new(
-            bytes(self.secret_key or '', encoding='utf8'),
-            bytes(message, encoding='utf-8'),
-            digestmod=hashlib.sha256
-        )
-        return base64.b64encode(mac.digest()).decode()
-
-    def get_headers(self, method: str, request_path: str, body: str = '') -> Dict[str, str]:
-        """Get authenticated headers"""
-        timestamp = datetime.utcnow().isoformat()[:-3] + 'Z'
-        signature = self.generate_signature(timestamp, method, request_path, body)
+        # Trading pairs prioritized by liquidity and minimum requirements
+        self.trading_pairs = [
+            'MEME-USDT',
+            'NEIRO-USDT', 
+            'SATS-USDT',
+            'PEPE-USDT',
+            'SHIB-USDT',
+            'FLOKI-USDT'
+        ]
+        
+        logger.info("Autonomous Trading System initialized for 24/7 operation")
+    
+    def get_timestamp(self) -> str:
+        return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+    
+    def create_signature(self, timestamp: str, method: str, path: str, body: str = '') -> str:
+        message = timestamp + method + path + body
+        signature = hmac.new(
+            self.secret_key.encode('utf-8'),
+            message.encode('utf-8'),
+            hashlib.sha256
+        ).digest()
+        return base64.b64encode(signature).decode('utf-8')
+    
+    def get_headers(self, method: str, path: str, body: str = '') -> dict:
+        timestamp = self.get_timestamp()
+        signature = self.create_signature(timestamp, method, path, body)
         
         return {
-            'OK-ACCESS-KEY': self.api_key or '',
+            'OK-ACCESS-KEY': self.api_key,
             'OK-ACCESS-SIGN': signature,
             'OK-ACCESS-TIMESTAMP': timestamp,
-            'OK-ACCESS-PASSPHRASE': self.passphrase or '',
+            'OK-ACCESS-PASSPHRASE': self.passphrase,
             'Content-Type': 'application/json'
         }
-
-    def get_account_balance(self) -> float:
-        """Get available USDT balance"""
+    
+    def api_request(self, method: str, endpoint: str, body: str = None):
+        url = self.base_url + endpoint
+        headers = self.get_headers(method, endpoint, body or '')
+        
         try:
-            path = '/api/v5/account/balance'
-            headers = self.get_headers('GET', path)
-            
-            response = requests.get(self.base_url + path, headers=headers)
-            data = response.json()
-            
-            if data.get('code') == '0':
-                for detail in data['data'][0]['details']:
-                    if detail['ccy'] == 'USDT':
-                        return float(detail['availBal'])
-            return 0.0
-        except Exception as e:
-            print(f"Balance error: {e}")
-            return 0.0
-
-    def get_market_data(self, symbol: str) -> Dict[str, Any]:
-        """Get market data for symbol"""
-        try:
-            # Get ticker
-            ticker_response = requests.get(f'{self.base_url}/api/v5/market/ticker?instId={symbol}')
-            ticker_data = ticker_response.json()
-            
-            if not ticker_data.get('data'):
-                return {}
-                
-            ticker = ticker_data['data'][0]
-            
-            # Get candles for analysis
-            candle_response = requests.get(f'{self.base_url}/api/v5/market/candles?instId={symbol}&bar=1H&limit=20')
-            candle_data = candle_response.json()
-            
-            candles = candle_data.get('data', [])
-            
-            return {
-                'symbol': symbol,
-                'price': float(ticker['last']),
-                'volume_24h': float(ticker['vol24h']),
-                'change_24h': float(ticker.get('chg24h', '0')),
-                'high_24h': float(ticker['high24h']),
-                'low_24h': float(ticker['low24h']),
-                'candles': candles
-            }
-        except Exception as e:
-            print(f"Market data error for {symbol}: {e}")
-            return {}
-
-    def analyze_opportunity(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze trading opportunity with simplified but effective signals"""
-        if not market_data or not market_data.get('candles'):
-            return {'action': 'hold', 'confidence': 0.0, 'reason': 'No data'}
-        
-        symbol = market_data['symbol']
-        current_price = market_data['price']
-        change_24h = market_data['change_24h']
-        volume_24h = market_data['volume_24h']
-        
-        # Extract closing prices from candles
-        closes = [float(candle[4]) for candle in market_data['candles']]
-        if len(closes) < 10:
-            return {'action': 'hold', 'confidence': 0.0, 'reason': 'Insufficient candle data'}
-        
-        # Calculate simple moving averages
-        sma_5 = sum(closes[-5:]) / 5
-        sma_10 = sum(closes[-10:]) / 10
-        
-        # Calculate RSI
-        gains = []
-        losses = []
-        for i in range(1, len(closes)):
-            change = closes[i] - closes[i-1]
-            if change > 0:
-                gains.append(change)
-                losses.append(0)
+            if method == 'GET':
+                response = requests.get(url, headers=headers, timeout=15)
             else:
-                gains.append(0)
-                losses.append(abs(change))
+                response = requests.post(url, headers=headers, data=body, timeout=15)
+            
+            return response
+        except Exception as e:
+            logger.error(f"API request failed: {e}")
+            return None
+    
+    def get_portfolio_balance(self):
+        """Get comprehensive portfolio balance including positions"""
+        response = self.api_request('GET', '/api/v5/account/balance')
         
-        avg_gain = sum(gains[-14:]) / 14 if len(gains) >= 14 else sum(gains) / len(gains)
-        avg_loss = sum(losses[-14:]) / 14 if len(losses) >= 14 else sum(losses) / len(losses)
+        if response and response.status_code == 200:
+            data = response.json()
+            if data.get('code') == '0':
+                portfolio = {}
+                total_usd_value = 0.0
+                
+                for detail in data['data'][0]['details']:
+                    currency = detail['ccy']
+                    balance = float(detail['availBal'])
+                    if balance > 0:
+                        portfolio[currency] = balance
+                        
+                        # Convert to USD value for total calculation
+                        if currency == 'USDT':
+                            total_usd_value += balance
+                        else:
+                            # Get USD value for other currencies
+                            try:
+                                ticker_symbol = f"{currency}-USDT"
+                                ticker_response = self.api_request('GET', f'/api/v5/market/ticker?instId={ticker_symbol}')
+                                if ticker_response and ticker_response.status_code == 200:
+                                    ticker_data = ticker_response.json()
+                                    if ticker_data.get('data'):
+                                        price = float(ticker_data['data'][0]['last'])
+                                        total_usd_value += balance * price
+                            except:
+                                pass
+                
+                return portfolio, total_usd_value
         
-        rsi = 100 - (100 / (1 + (avg_gain / max(avg_loss, 0.001))))
-        
-        # Scoring system
-        signals = []
-        confidence = 0.0
-        
-        # RSI oversold signal (strong)
-        if rsi < 30:
-            signals.append("RSI oversold")
-            confidence += 0.4
-        elif rsi < 40:
-            signals.append("RSI approaching oversold")
-            confidence += 0.2
-        
-        # Moving average bullish alignment
-        if current_price > sma_5 > sma_10:
-            signals.append("Bullish MA trend")
-            confidence += 0.3
-        
-        # 24h decline (potential bounce)
-        if change_24h < -3.0:
-            signals.append("24h decline recovery")
-            confidence += 0.2
-        elif change_24h < -1.0:
-            signals.append("Minor decline")
-            confidence += 0.1
-        
-        # Volume confirmation
-        if volume_24h > 1000000:  # Minimum volume threshold
-            signals.append("Good volume")
-            confidence += 0.1
-        
-        # Price position in 24h range
-        price_position = (current_price - market_data['low_24h']) / (market_data['high_24h'] - market_data['low_24h'])
-        if price_position < 0.3:
-            signals.append("Near 24h low")
-            confidence += 0.2
-        
-        # Final decision
-        if confidence >= self.min_confidence and len(signals) >= 2:
-            return {
-                'action': 'buy',
-                'confidence': min(confidence, 1.0),
-                'signals': signals,
-                'symbol': symbol,
-                'price': current_price,
-                'rsi': rsi
-            }
-        
-        return {
-            'action': 'hold',
-            'confidence': confidence,
-            'signals': signals,
-            'reason': f"Confidence {confidence:.2f} below {self.min_confidence}"
-        }
-
-    def execute_trade(self, symbol: str, amount: float) -> bool:
-        """Execute a buy trade"""
+        return {}, 0.0
+    
+    def analyze_market_opportunity(self, symbol: str):
+        """Analyze market for trading opportunities"""
         try:
-            # Get current price for quantity calculation
-            market_data = self.get_market_data(symbol)
-            if not market_data:
-                return False
+            # Get market data
+            ticker_response = self.api_request('GET', f'/api/v5/market/ticker?instId={symbol}')
+            if not ticker_response or ticker_response.status_code != 200:
+                return None
             
-            current_price = market_data['price']
-            quantity = amount / current_price
+            ticker_data = ticker_response.json()
+            if not ticker_data.get('data'):
+                return None
             
-            # Get instrument info for lot size
-            instrument_response = requests.get(f'{self.base_url}/api/v5/public/instruments?instType=SPOT&instId={symbol}')
-            if instrument_response.status_code == 200:
-                instrument_data = instrument_response.json()
-                if instrument_data.get('data'):
-                    instrument = instrument_data['data'][0]
-                    min_size = float(instrument.get('minSz', '0'))
-                    lot_size = float(instrument.get('lotSz', '0'))
+            ticker = ticker_data['data'][0]
+            current_price = float(ticker['last'])
+            volume_24h = float(ticker['vol24h'])
+            price_change_24h = float(ticker['sodUtc8'])
+            
+            # Get historical data for trend analysis
+            candles_response = self.api_request('GET', f'/api/v5/market/candles?instId={symbol}&bar=5m&limit=20')
+            if candles_response and candles_response.status_code == 200:
+                candles_data = candles_response.json()
+                if candles_data.get('data'):
+                    candles = candles_data['data']
                     
-                    # Adjust quantity
-                    if lot_size > 0:
-                        quantity = round(quantity / lot_size) * lot_size
+                    # Calculate simple trend
+                    prices = [float(candle[4]) for candle in candles]  # Close prices
+                    recent_avg = sum(prices[:5]) / 5  # Last 5 periods
+                    older_avg = sum(prices[10:15]) / 5  # Earlier 5 periods
                     
-                    if quantity < min_size:
-                        print(f"Quantity {quantity:.8f} below minimum {min_size}")
-                        return False
-            
-            # Place order
-            order_data = {
-                "instId": symbol,
-                "tdMode": "cash",
-                "side": "buy",
-                "ordType": "market",
-                "sz": str(quantity)
-            }
-            
-            path = '/api/v5/trade/order'
-            body = json.dumps(order_data)
-            headers = self.get_headers('POST', path, body)
-            
-            response = requests.post(self.base_url + path, headers=headers, data=body)
+                    trend_direction = "up" if recent_avg > older_avg else "down"
+                    trend_strength = abs(recent_avg - older_avg) / older_avg
+                    
+                    return {
+                        'symbol': symbol,
+                        'price': current_price,
+                        'volume_24h': volume_24h,
+                        'price_change_24h': price_change_24h,
+                        'trend_direction': trend_direction,
+                        'trend_strength': trend_strength,
+                        'volatility': abs(price_change_24h),
+                        'score': self.calculate_opportunity_score(volume_24h, price_change_24h, trend_strength)
+                    }
+        except Exception as e:
+            logger.debug(f"Analysis failed for {symbol}: {e}")
+            return None
+    
+    def calculate_opportunity_score(self, volume_24h: float, price_change_24h: float, trend_strength: float) -> float:
+        """Calculate trading opportunity score"""
+        volume_score = min(volume_24h / 1000000, 1.0)  # Normalize volume
+        volatility_score = min(abs(price_change_24h) / 10, 1.0)  # Normalize volatility
+        trend_score = min(trend_strength * 10, 1.0)  # Normalize trend strength
+        
+        # Weighted composite score
+        total_score = (volume_score * 0.4) + (volatility_score * 0.3) + (trend_score * 0.3)
+        return total_score
+    
+    def execute_autonomous_trade(self, opportunity: dict, available_balance: float):
+        """Execute autonomous trade based on opportunity analysis"""
+        symbol = opportunity['symbol']
+        price = opportunity['price']
+        trend_direction = opportunity['trend_direction']
+        
+        # Determine trade size (use 10-20% of available USDT balance)
+        trade_amount = min(available_balance * 0.15, 50.0)  # Max $50 per trade
+        
+        if trade_amount < 1.0:  # Minimum trade size
+            logger.info(f"Trade amount too small: ${trade_amount:.4f}")
+            return False
+        
+        # Calculate quantity
+        quantity = trade_amount / price
+        
+        # Get minimum size requirements
+        inst_response = self.api_request('GET', f'/api/v5/public/instruments?instType=SPOT&instId={symbol}')
+        if inst_response and inst_response.status_code == 200:
+            inst_data = inst_response.json()
+            if inst_data.get('data'):
+                min_size = float(inst_data['data'][0]['minSz'])
+                if quantity < min_size:
+                    quantity = min_size
+        
+        logger.info(f"Executing autonomous trade: {symbol}")
+        logger.info(f"Direction: {trend_direction}, Amount: ${trade_amount:.4f}, Quantity: {quantity:.8f}")
+        
+        # Execute buy order
+        order_data = {
+            "instId": symbol,
+            "tdMode": "cash",
+            "side": "buy",
+            "ordType": "market",
+            "sz": str(quantity)
+        }
+        
+        order_body = json.dumps(order_data)
+        response = self.api_request('POST', '/api/v5/trade/order', order_body)
+        
+        if response and response.status_code == 200:
             result = response.json()
-            
             if result.get('code') == '0':
                 order_id = result['data'][0]['ordId']
-                self.trades_executed += 1
-                self.last_trade_time = datetime.now()
-                
-                print(f"\n🎯 TRADE EXECUTED: {symbol}")
-                print(f"Order ID: {order_id}")
-                print(f"Quantity: {quantity:.6f}")
-                print(f"Price: ${current_price:.6f}")
-                print(f"Value: ${amount:.2f}")
-                print(f"Time: {datetime.now().strftime('%H:%M:%S')}")
-                
+                logger.info(f"✓ Trade executed successfully: {order_id}")
+                self.successful_trades += 1
                 return True
             else:
-                error_msg = result.get('msg', 'Unknown error')
-                print(f"Trade failed: {error_msg}")
-                return False
-                
-        except Exception as e:
-            print(f"Trade execution error: {e}")
-            return False
-
-    def run_trading_cycle(self):
-        """Execute one trading cycle"""
-        try:
-            print(f"\n--- Trading Cycle {datetime.now().strftime('%H:%M:%S')} ---")
-            
-            # Check balance
-            balance = self.get_account_balance()
-            print(f"Available USDT: ${balance:.2f}")
-            
-            if balance < 0.5:
-                print("Insufficient balance for trading")
-                return
-            
-            # Calculate trade amount
-            trade_amount = min(balance * 0.3, self.max_trade_amount, balance - 0.2)
-            
-            # Analyze all pairs
-            best_opportunity = None
-            best_confidence = 0
-            
-            for symbol in self.active_pairs:
-                try:
-                    market_data = self.get_market_data(symbol)
-                    if market_data:
-                        analysis = self.analyze_opportunity(market_data)
-                        
-                        print(f"{symbol}: {analysis['action']} (conf: {analysis.get('confidence', 0):.2f})")
-                        
-                        if analysis['action'] == 'buy' and analysis['confidence'] > best_confidence:
-                            best_opportunity = analysis
-                            best_confidence = analysis['confidence']
-                            
-                except Exception as e:
-                    print(f"{symbol}: Error - {e}")
-            
-            # Execute best opportunity
-            if best_opportunity and best_confidence >= self.min_confidence:
-                symbol = best_opportunity['symbol']
-                print(f"\nBest opportunity: {symbol}")
-                print(f"Confidence: {best_confidence:.2f}")
-                print(f"Signals: {', '.join(best_opportunity['signals'][:3])}")
-                
-                if self.execute_trade(symbol, trade_amount):
-                    print(f"Total trades executed: {self.trades_executed}")
-                else:
-                    print("Trade execution failed")
-            else:
-                print("No high-confidence opportunities found")
-                
-        except Exception as e:
-            print(f"Cycle error: {e}")
-
-    def start_continuous_trading(self):
-        """Start continuous autonomous trading"""
-        print("\n" + "="*50)
-        print("AUTONOMOUS LIVE TRADING STARTED")
-        print("="*50)
-        print("Real money execution enabled")
-        print("Press Ctrl+C to stop")
-        print("="*50)
+                logger.warning(f"Trade failed: {result.get('msg')}")
         
+        return False
+    
+    def autonomous_trading_cycle(self):
+        """Execute one complete autonomous trading cycle"""
+        self.cycle_count += 1
+        logger.info(f"Autonomous Trading Cycle #{self.cycle_count}")
+        
+        # Get current portfolio
+        portfolio, total_value = self.get_portfolio_balance()
+        usdt_balance = portfolio.get('USDT', 0.0)
+        
+        logger.info(f"Portfolio Value: ${total_value:.4f}, USDT: ${usdt_balance:.4f}")
+        
+        # Only trade if we have sufficient USDT balance
+        if usdt_balance < 1.0:
+            logger.info("Insufficient USDT balance for trading")
+            return
+        
+        # Analyze all trading pairs
+        opportunities = []
+        for symbol in self.trading_pairs:
+            opportunity = self.analyze_market_opportunity(symbol)
+            if opportunity:
+                opportunities.append(opportunity)
+        
+        if not opportunities:
+            logger.info("No trading opportunities found")
+            return
+        
+        # Sort by opportunity score
+        opportunities.sort(key=lambda x: x['score'], reverse=True)
+        best_opportunity = opportunities[0]
+        
+        logger.info(f"Best opportunity: {best_opportunity['symbol']} (score: {best_opportunity['score']:.4f})")
+        
+        # Execute trade if score is above threshold
+        if best_opportunity['score'] > 0.3:
+            success = self.execute_autonomous_trade(best_opportunity, usdt_balance)
+            if success:
+                logger.info(f"Successful trades: {self.successful_trades}")
+        else:
+            logger.info("No opportunities meet trading threshold")
+    
+    def start_autonomous_operation(self):
+        """Start continuous autonomous trading operation"""
         self.running = True
-        cycle_count = 0
+        logger.info("🚀 AUTONOMOUS TRADING SYSTEM ACTIVATED")
+        logger.info("Operating 24/7 with 5-minute intervals")
         
-        try:
-            while self.running:
-                cycle_count += 1
-                print(f"\n[Cycle {cycle_count}] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        while self.running:
+            try:
+                self.autonomous_trading_cycle()
                 
-                self.run_trading_cycle()
+                # Wait 5 minutes between cycles
+                for i in range(300):  # 5 minutes = 300 seconds
+                    if not self.running:
+                        break
+                    time.sleep(1)
                 
-                # Wait before next cycle
-                print("Next cycle in 60 seconds...")
-                time.sleep(60)
-                
-        except KeyboardInterrupt:
-            print(f"\n\nTrading stopped")
-            print(f"Cycles completed: {cycle_count}")
-            print(f"Trades executed: {self.trades_executed}")
-        finally:
-            self.running = False
+            except Exception as e:
+                logger.error(f"Cycle error: {e}")
+                time.sleep(60)  # Wait 1 minute on error
+        
+        logger.info("Autonomous trading system stopped")
+    
+    def stop_autonomous_operation(self):
+        """Stop autonomous trading"""
+        self.running = False
+        logger.info("Stopping autonomous trading system...")
 
 def main():
-    """Start the trading bot"""
-    bot = LiveTradingBot()
-    bot.start_continuous_trading()
+    """Start autonomous trading system"""
+    system = AutonomousTradingSystem()
+    
+    try:
+        # Start autonomous operation
+        system.start_autonomous_operation()
+    except KeyboardInterrupt:
+        logger.info("Shutdown signal received")
+        system.stop_autonomous_operation()
 
 if __name__ == "__main__":
     main()

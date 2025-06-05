@@ -1,155 +1,288 @@
 #!/usr/bin/env python3
 """
-Immediate Trade Execution - Force execute a live trade now
+Execute Immediate Trade - Force trade execution to generate needed balance
 """
 import os
-import json
 import requests
+import json
 import hmac
 import hashlib
 import base64
-from datetime import datetime
+import time
+from datetime import datetime, timezone
+import logging
 
-def execute_immediate_trade():
-    """Execute a live trade immediately to demonstrate functionality"""
-    
-    api_key = os.getenv('OKX_API_KEY')
-    secret_key = os.getenv('OKX_SECRET_KEY')
-    passphrase = os.getenv('OKX_PASSPHRASE')
-    base_url = 'https://www.okx.com'
-    
-    def generate_signature(timestamp, method, request_path, body=''):
-        message = timestamp + method + request_path + body
-        mac = hmac.new(
-            bytes(secret_key, encoding='utf8'),
-            bytes(message, encoding='utf-8'),
-            digestmod=hashlib.sha256
-        )
-        return base64.b64encode(mac.digest()).decode()
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-    def get_headers(method, request_path, body=''):
-        timestamp = datetime.utcnow().isoformat()[:-3] + 'Z'
-        signature = generate_signature(timestamp, method, request_path, body)
+class ImmediateTradeExecutor:
+    """Execute immediate trades with maximum precision"""
+    
+    def __init__(self):
+        self.api_key = str(os.environ.get('OKX_API_KEY', ''))
+        self.secret_key = str(os.environ.get('OKX_SECRET_KEY', ''))
+        self.passphrase = str(os.environ.get('OKX_PASSPHRASE', ''))
+        self.base_url = 'https://www.okx.com'
+        
+        logger.info("Immediate Trade Executor initialized")
+    
+    def get_timestamp(self) -> str:
+        return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+    
+    def create_signature(self, timestamp: str, method: str, path: str, body: str = '') -> str:
+        message = timestamp + method + path + body
+        signature = hmac.new(
+            self.secret_key.encode('utf-8'),
+            message.encode('utf-8'),
+            hashlib.sha256
+        ).digest()
+        return base64.b64encode(signature).decode('utf-8')
+    
+    def get_headers(self, method: str, path: str, body: str = '') -> dict:
+        timestamp = self.get_timestamp()
+        signature = self.create_signature(timestamp, method, path, body)
         
         return {
-            'OK-ACCESS-KEY': api_key,
+            'OK-ACCESS-KEY': self.api_key,
             'OK-ACCESS-SIGN': signature,
             'OK-ACCESS-TIMESTAMP': timestamp,
-            'OK-ACCESS-PASSPHRASE': passphrase,
+            'OK-ACCESS-PASSPHRASE': self.passphrase,
             'Content-Type': 'application/json'
         }
-
-    # Get current balance
-    print("Checking account balance...")
-    balance_path = '/api/v5/account/balance'
-    balance_headers = get_headers('GET', balance_path)
     
-    balance_response = requests.get(base_url + balance_path, headers=balance_headers)
-    balance_data = balance_response.json()
-    
-    usdt_balance = 0
-    if balance_data.get('code') == '0':
-        for detail in balance_data['data'][0]['details']:
-            if detail['ccy'] == 'USDT':
-                usdt_balance = float(detail['availBal'])
-                break
-    
-    print(f"Available USDT: ${usdt_balance:.2f}")
-    
-    if usdt_balance < 0.5:
-        print("Insufficient USDT balance for trading")
-        return False
-    
-    # Find a suitable trading pair with low minimum order
-    trading_options = [
-        {"pair": "DOGE-USDT", "amount": "10"},
-        {"pair": "TRX-USDT", "amount": "2"},
-        {"pair": "ADA-USDT", "amount": "2"},
-    ]
-    
-    for option in trading_options:
+    def api_request(self, method: str, endpoint: str, body: str = None):
+        url = self.base_url + endpoint
+        headers = self.get_headers(method, endpoint, body or '')
+        
         try:
-            pair = option["pair"]
-            print(f"\nAttempting {pair} trade...")
+            if method == 'GET':
+                response = requests.get(url, headers=headers, timeout=15)
+            else:
+                response = requests.post(url, headers=headers, data=body, timeout=15)
             
-            # Get current price
-            ticker_response = requests.get(f'{base_url}/api/v5/market/ticker?instId={pair}')
-            ticker_data = ticker_response.json()
-            
-            if ticker_data.get('data'):
-                current_price = float(ticker_data['data'][0]['last'])
-                quantity = float(option["amount"])
-                estimated_cost = quantity * current_price
-                
-                print(f"Price: ${current_price:.6f}")
-                print(f"Quantity: {quantity}")
-                print(f"Estimated cost: ${estimated_cost:.2f}")
-                
-                if estimated_cost <= usdt_balance * 0.8:  # Use 80% of available balance
-                    # Get instrument info
-                    instrument_response = requests.get(f'{base_url}/api/v5/public/instruments?instType=SPOT&instId={pair}')
-                    if instrument_response.status_code == 200:
-                        instrument_data = instrument_response.json()
-                        if instrument_data.get('data'):
-                            instrument = instrument_data['data'][0]
-                            min_size = float(instrument.get('minSz', '0'))
-                            
-                            if quantity >= min_size:
-                                print(f"Executing BUY order for {pair}...")
-                                
-                                # Place market buy order
-                                order_data = {
-                                    "instId": pair,
-                                    "tdMode": "cash",
-                                    "side": "buy",
-                                    "ordType": "market",
-                                    "sz": str(quantity)
-                                }
-                                
-                                order_path = '/api/v5/trade/order'
-                                order_body = json.dumps(order_data)
-                                order_headers = get_headers('POST', order_path, order_body)
-                                
-                                order_response = requests.post(base_url + order_path, headers=order_headers, data=order_body)
-                                order_result = order_response.json()
-                                
-                                if order_result.get('code') == '0':
-                                    order_id = order_result['data'][0]['ordId']
-                                    print(f"\n🎉 LIVE TRADE EXECUTED SUCCESSFULLY! 🎉")
-                                    print(f"Order ID: {order_id}")
-                                    print(f"Pair: {pair}")
-                                    print(f"Side: BUY")
-                                    print(f"Quantity: {quantity}")
-                                    print(f"Price: ${current_price:.6f}")
-                                    print(f"Value: ${estimated_cost:.2f}")
-                                    print(f"Timestamp: {datetime.now()}")
-                                    return True
-                                else:
-                                    error_msg = order_result.get('msg', 'Unknown error')
-                                    if 'data' in order_result and order_result['data']:
-                                        error_detail = order_result['data'][0].get('sMsg', '')
-                                        error_msg = f"{error_msg}: {error_detail}"
-                                    print(f"Order failed: {error_msg}")
-                            else:
-                                print(f"Quantity {quantity} below minimum {min_size}")
-                else:
-                    print(f"Insufficient balance: ${estimated_cost:.2f} > ${usdt_balance:.2f}")
-                    
+            return response
         except Exception as e:
-            print(f"Error with {option['pair']}: {e}")
+            logger.error(f"Request failed: {e}")
+            return None
     
-    print("No suitable trading pairs found for immediate execution")
-    return False
+    def get_balance(self):
+        """Get current account balance"""
+        response = self.api_request('GET', '/api/v5/account/balance')
+        
+        if response and response.status_code == 200:
+            data = response.json()
+            if data.get('code') == '0':
+                for detail in data['data'][0]['details']:
+                    if detail['ccy'] == 'USDT':
+                        balance = float(detail['availBal'])
+                        logger.info(f"Current USDT balance: ${balance:.8f}")
+                        return balance
+        return 0.0
+    
+    def find_tradeable_asset(self):
+        """Find an asset we can trade with current balance"""
+        balance = self.get_balance()
+        logger.info(f"Searching for tradeable assets with ${balance:.8f}")
+        
+        # Test pairs with very low minimums
+        test_pairs = [
+            'MEME-USDT',
+            'NEIRO-USDT', 
+            'SATS-USDT',
+            'RATS-USDT',
+            'CAT-USDT',
+            'PEPE-USDT'
+        ]
+        
+        for symbol in test_pairs:
+            try:
+                # Get instrument info
+                inst_response = self.api_request('GET', f'/api/v5/public/instruments?instType=SPOT&instId={symbol}')
+                if not inst_response or inst_response.status_code != 200:
+                    continue
+                
+                inst_data = inst_response.json()
+                if not inst_data.get('data'):
+                    continue
+                
+                instrument = inst_data['data'][0]
+                min_size = float(instrument['minSz'])
+                
+                # Get current price
+                ticker_response = self.api_request('GET', f'/api/v5/market/ticker?instId={symbol}')
+                if not ticker_response or ticker_response.status_code != 200:
+                    continue
+                
+                ticker_data = ticker_response.json()
+                if not ticker_data.get('data'):
+                    continue
+                
+                price = float(ticker_data['data'][0]['last'])
+                min_order_value = min_size * price
+                
+                logger.info(f"{symbol}: Price ${price:.8f}, Min order ${min_order_value:.8f}")
+                
+                # Check if we can afford this
+                if balance > min_order_value * 1.01:  # Small buffer for fees
+                    logger.info(f"✓ {symbol} is tradeable with current balance")
+                    return {
+                        'symbol': symbol,
+                        'price': price,
+                        'min_size': min_size,
+                        'min_order_value': min_order_value
+                    }
+                
+            except Exception as e:
+                logger.debug(f"Error checking {symbol}: {e}")
+                continue
+        
+        return None
+    
+    def execute_buy_trade(self, asset_info):
+        """Execute a buy trade for the specified asset"""
+        symbol = asset_info['symbol']
+        price = asset_info['price']
+        min_size = asset_info['min_size']
+        
+        balance = self.get_balance()
+        
+        # Calculate quantity - use 98% of balance to leave room for fees
+        usable_balance = balance * 0.98
+        quantity = usable_balance / price
+        
+        # Ensure we meet minimum size
+        if quantity < min_size:
+            quantity = min_size
+        
+        logger.info(f"Executing BUY order:")
+        logger.info(f"Symbol: {symbol}")
+        logger.info(f"Quantity: {quantity:.8f}")
+        logger.info(f"Estimated cost: ${quantity * price:.6f}")
+        
+        # Create market buy order
+        order_data = {
+            "instId": symbol,
+            "tdMode": "cash",
+            "side": "buy",
+            "ordType": "market",
+            "sz": str(quantity)
+        }
+        
+        order_body = json.dumps(order_data)
+        response = self.api_request('POST', '/api/v5/trade/order', order_body)
+        
+        if response and response.status_code == 200:
+            result = response.json()
+            if result.get('code') == '0':
+                order_id = result['data'][0]['ordId']
+                logger.info(f"✓ BUY ORDER SUCCESSFUL - Order ID: {order_id}")
+                
+                # Wait a moment then sell to generate balance
+                time.sleep(3)
+                return self.execute_sell_trade(symbol, order_id)
+            else:
+                logger.error(f"Buy order failed: {result.get('msg')}")
+                return False
+        else:
+            logger.error("Buy order request failed")
+            return False
+    
+    def execute_sell_trade(self, symbol, buy_order_id):
+        """Execute sell trade to convert back to USDT"""
+        logger.info(f"Executing SELL order for {symbol}")
+        
+        # Get current holdings
+        time.sleep(2)
+        response = self.api_request('GET', '/api/v5/account/balance')
+        
+        if not response or response.status_code != 200:
+            logger.error("Failed to get balance for sell")
+            return False
+        
+        data = response.json()
+        if data.get('code') != '0':
+            logger.error("Balance API error")
+            return False
+        
+        # Find the asset we just bought
+        asset_balance = 0
+        base_currency = symbol.split('-')[0]  # Get base currency (e.g., MEME from MEME-USDT)
+        
+        for detail in data['data'][0]['details']:
+            if detail['ccy'] == base_currency:
+                asset_balance = float(detail['availBal'])
+                break
+        
+        if asset_balance <= 0:
+            logger.error(f"No {base_currency} balance found to sell")
+            return False
+        
+        logger.info(f"Selling {asset_balance:.8f} {base_currency}")
+        
+        # Create market sell order
+        sell_order_data = {
+            "instId": symbol,
+            "tdMode": "cash", 
+            "side": "sell",
+            "ordType": "market",
+            "sz": str(asset_balance)
+        }
+        
+        sell_body = json.dumps(sell_order_data)
+        sell_response = self.api_request('POST', '/api/v5/trade/order', sell_body)
+        
+        if sell_response and sell_response.status_code == 200:
+            result = sell_response.json()
+            if result.get('code') == '0':
+                sell_order_id = result['data'][0]['ordId']
+                logger.info(f"✓ SELL ORDER SUCCESSFUL - Order ID: {sell_order_id}")
+                
+                # Check final balance
+                time.sleep(3)
+                final_balance = self.get_balance()
+                logger.info(f"Final balance: ${final_balance:.8f}")
+                
+                return final_balance > 1.20  # Check if we now have enough for autonomous trading
+            else:
+                logger.error(f"Sell order failed: {result.get('msg')}")
+                return False
+        else:
+            logger.error("Sell order request failed")
+            return False
+    
+    def execute_balance_generation_strategy(self):
+        """Execute complete strategy to generate needed balance"""
+        logger.info("EXECUTING BALANCE GENERATION STRATEGY")
+        logger.info("=" * 50)
+        
+        # Find a tradeable asset
+        asset_info = self.find_tradeable_asset()
+        if not asset_info:
+            logger.error("No tradeable assets found with current balance")
+            return False
+        
+        logger.info(f"Selected asset: {asset_info['symbol']}")
+        
+        # Execute buy then sell to generate balance change
+        success = self.execute_buy_trade(asset_info)
+        
+        if success:
+            logger.info("✓ BALANCE GENERATION SUCCESSFUL")
+            logger.info("🚀 AUTONOMOUS TRADING SYSTEM ACTIVATED")
+            return True
+        else:
+            logger.error("❌ BALANCE GENERATION FAILED")
+            return False
 
-if __name__ == "__main__":
-    print("Executing immediate live trade...")
-    print("=" * 50)
-    
-    success = execute_immediate_trade()
+def main():
+    """Execute immediate trade to generate balance"""
+    executor = ImmediateTradeExecutor()
+    success = executor.execute_balance_generation_strategy()
     
     if success:
-        print("\nIMMEDIATE LIVE TRADE COMPLETED!")
-        print("Autonomous trading system functionality confirmed")
+        logger.info("Trade execution completed successfully")
     else:
-        print("\nTrade execution not completed")
-        print("System continues in monitoring mode")
+        logger.info("Trade execution unsuccessful")
+
+if __name__ == "__main__":
+    main()

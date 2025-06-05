@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Precise Balance Trader - Executes trades with exact balance accounting
-Handles trading fees and precise quantity calculations for successful autonomous execution
+Precise Balance Trader - Execute trades with exact fee calculations
 """
 import os
 import requests
@@ -10,59 +9,40 @@ import hmac
 import hashlib
 import base64
 import time
-import threading
 from datetime import datetime, timezone
-from typing import Dict, Optional
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class PreciseBalanceTrader:
-    """Precise balance trader with exact fee calculations and balance management"""
+    """Execute trades with precise balance and fee calculations"""
     
     def __init__(self):
-        self.api_key = os.environ.get('OKX_API_KEY')
-        self.secret_key = os.environ.get('OKX_SECRET_KEY')
-        self.passphrase = os.environ.get('OKX_PASSPHRASE')
+        self.api_key = str(os.environ.get('OKX_API_KEY', ''))
+        self.secret_key = str(os.environ.get('OKX_SECRET_KEY', ''))
+        self.passphrase = str(os.environ.get('OKX_PASSPHRASE', ''))
         self.base_url = 'https://www.okx.com'
         
-        # Ultra-low minimum trading pairs
-        self.precision_pairs = [
-            'FLOKI-USDT',   # Confirmed viable at $0.91
-            'NEIRO-USDT',   # Confirmed viable at $0.91
-            'BONK-USDT',    # Alternative micro-cap
-            'MEME-USDT'     # Meme token option
-        ]
+        # OKX fee structure
+        self.maker_fee = 0.0008  # 0.08%
+        self.taker_fee = 0.001   # 0.1%
         
-        # Precise trading configuration
-        self.fee_buffer = 0.002  # 0.2% fee buffer
-        self.safety_margin = 0.01  # $0.01 safety margin
-        self.max_usage = 0.98  # Use 98% of balance
-        
-        # State tracking
-        self.is_running = False
-        self.execution_count = 0
-        self.last_execution = 0
-        
-        logger.info("Precise Balance Trader initialized")
+        logger.info("Precise Balance Trader initialized with fee calculations")
     
     def get_timestamp(self) -> str:
-        """Get precise timestamp for API"""
         return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
     
     def create_signature(self, timestamp: str, method: str, path: str, body: str = '') -> str:
-        """Create API signature"""
         message = timestamp + method + path + body
-        mac = hmac.new(
-            bytes(self.secret_key, encoding='utf8'),
-            bytes(message, encoding='utf-8'),
-            digestmod=hashlib.sha256
-        )
-        return base64.b64encode(mac.digest()).decode()
+        signature = hmac.new(
+            self.secret_key.encode('utf-8'),
+            message.encode('utf-8'),
+            hashlib.sha256
+        ).digest()
+        return base64.b64encode(signature).decode('utf-8')
     
-    def get_auth_headers(self, method: str, path: str, body: str = '') -> Dict[str, str]:
-        """Get authenticated headers"""
+    def get_headers(self, method: str, path: str, body: str = '') -> dict:
         timestamp = self.get_timestamp()
         signature = self.create_signature(timestamp, method, path, body)
         
@@ -74,263 +54,231 @@ class PreciseBalanceTrader:
             'Content-Type': 'application/json'
         }
     
-    def make_request(self, method: str, endpoint: str, body: str = None) -> Optional[Dict]:
-        """Make authenticated API request"""
+    def api_request(self, method: str, endpoint: str, body: str = None):
         url = self.base_url + endpoint
-        headers = self.get_auth_headers(method, endpoint, body or '')
+        headers = self.get_headers(method, endpoint, body or '')
         
         try:
             if method == 'GET':
-                response = requests.get(url, headers=headers, timeout=10)
-            elif method == 'POST':
-                response = requests.post(url, headers=headers, data=body, timeout=10)
+                response = requests.get(url, headers=headers, timeout=15)
             else:
-                return None
+                response = requests.post(url, headers=headers, data=body, timeout=15)
             
-            if response.status_code == 200:
-                return response.json()
-            else:
-                logger.error(f"Request failed: {response.status_code} - {response.text}")
-                return None
+            return response
         except Exception as e:
-            logger.error(f"Request error: {e}")
+            logger.error(f"Request failed: {e}")
             return None
     
-    def get_exact_balance(self) -> float:
-        """Get exact available USDT balance"""
-        response = self.make_request('GET', '/api/v5/account/balance')
+    def get_balance(self) -> float:
+        """Get exact USDT balance"""
+        response = self.api_request('GET', '/api/v5/account/balance')
         
-        if response and response.get('code') == '0':
-            for detail in response['data'][0]['details']:
-                if detail['ccy'] == 'USDT':
-                    balance = float(detail['availBal'])
-                    logger.info(f"Exact balance: ${balance:.8f}")
-                    return balance
-        
+        if response and response.status_code == 200:
+            data = response.json()
+            if data.get('code') == '0':
+                for detail in data['data'][0]['details']:
+                    if detail['ccy'] == 'USDT':
+                        balance = float(detail['availBal'])
+                        logger.info(f"Current balance: ${balance:.10f}")
+                        return balance
         return 0.0
     
-    def get_precise_market_specs(self, symbol: str) -> Optional[Dict]:
-        """Get precise market specifications for exact calculations"""
-        # Get instrument data
-        inst_url = f"/api/v5/public/instruments?instType=SPOT&instId={symbol}"
-        inst_response = requests.get(self.base_url + inst_url, timeout=10)
+    def calculate_precise_order_size(self, symbol: str, balance: float) -> dict:
+        """Calculate precise order size accounting for fees and minimums"""
+        
+        # Get instrument specifications
+        inst_response = self.api_request('GET', f'/api/v5/public/instruments?instType=SPOT&instId={symbol}')
+        if not inst_response or inst_response.status_code != 200:
+            return None
+        
+        inst_data = inst_response.json()
+        if not inst_data.get('data'):
+            return None
+        
+        instrument = inst_data['data'][0]
+        min_size = float(instrument['minSz'])
+        tick_size = float(instrument['tickSz'])
         
         # Get current price
-        ticker_url = f"/api/v5/market/ticker?instId={symbol}"
-        ticker_response = requests.get(self.base_url + ticker_url, timeout=10)
-        
-        if (inst_response.status_code == 200 and ticker_response.status_code == 200):
-            instrument = inst_response.json()['data'][0]
-            ticker = ticker_response.json()['data'][0]
-            
-            specs = {
-                'symbol': symbol,
-                'price': float(ticker['last']),
-                'min_size': float(instrument.get('minSz', '1')),
-                'lot_size': float(instrument.get('lotSz', '1')),
-                'tick_size': float(instrument.get('tickSz', '0.000001')),
-                'volume_24h': float(ticker.get('vol24h', '0'))
-            }
-            
-            specs['min_order_value'] = specs['min_size'] * specs['price']
-            
-            return specs
-        
-        return None
-    
-    def calculate_precise_trade(self, symbol: str, balance: float) -> Optional[Dict]:
-        """Calculate precise trade parameters with fee accounting"""
-        specs = self.get_precise_market_specs(symbol)
-        if not specs:
+        ticker_response = self.api_request('GET', f'/api/v5/market/ticker?instId={symbol}')
+        if not ticker_response or ticker_response.status_code != 200:
             return None
         
-        current_price = specs['price']
-        min_size = specs['min_size']
-        lot_size = specs['lot_size']
-        min_order_value = specs['min_order_value']
-        
-        # Calculate usable balance (accounting for fees and safety margin)
-        usable_balance = balance - self.safety_margin
-        max_trade_value = usable_balance * self.max_usage
-        
-        # Check if we can afford minimum order
-        if max_trade_value < min_order_value:
-            logger.info(f"{symbol}: Max trade ${max_trade_value:.6f} < min required ${min_order_value:.6f}")
+        ticker_data = ticker_response.json()
+        if not ticker_data.get('data'):
             return None
         
-        # Calculate quantity with fee buffer
-        fee_adjusted_balance = max_trade_value * (1 - self.fee_buffer)
-        base_quantity = fee_adjusted_balance / current_price
+        current_price = float(ticker_data['data'][0]['last'])
         
-        # Adjust for lot size
-        if lot_size > 0:
-            precise_quantity = int(base_quantity / lot_size) * lot_size
-        else:
-            precise_quantity = base_quantity
+        # Calculate maximum usable balance (reserve for fees)
+        fee_buffer = balance * (self.taker_fee + 0.0002)  # Extra 0.02% buffer
+        usable_balance = balance - fee_buffer
         
-        # Verify minimum size
-        if precise_quantity < min_size:
-            logger.info(f"{symbol}: Quantity {precise_quantity:.6f} < minimum {min_size:.6f}")
+        # Calculate quantity
+        raw_quantity = usable_balance / current_price
+        
+        # Ensure we meet minimum size
+        if raw_quantity < min_size:
+            logger.warning(f"Calculated quantity {raw_quantity:.8f} below minimum {min_size}")
             return None
         
-        # Calculate exact cost
-        exact_cost = precise_quantity * current_price
-        estimated_fee = exact_cost * 0.001  # 0.1% taker fee
-        total_cost = exact_cost + estimated_fee
+        # Round to appropriate precision
+        adjusted_quantity = min_size * round(raw_quantity / min_size)
         
-        # Final balance check
-        if total_cost > usable_balance:
-            # Adjust quantity down to fit exactly
-            adjusted_quantity = (usable_balance * 0.999) / current_price
-            if lot_size > 0:
-                adjusted_quantity = int(adjusted_quantity / lot_size) * lot_size
-            
-            if adjusted_quantity >= min_size:
-                precise_quantity = adjusted_quantity
-                exact_cost = precise_quantity * current_price
-                total_cost = exact_cost * 1.001  # Include fee estimate
+        # Final validation
+        estimated_cost = adjusted_quantity * current_price
+        estimated_fee = estimated_cost * self.taker_fee
+        total_required = estimated_cost + estimated_fee
+        
+        if total_required > balance:
+            logger.warning(f"Total required ${total_required:.8f} exceeds balance ${balance:.8f}")
+            return None
+        
+        logger.info(f"Precise calculation for {symbol}:")
+        logger.info(f"  Price: ${current_price:.8f}")
+        logger.info(f"  Quantity: {adjusted_quantity:.8f}")
+        logger.info(f"  Cost: ${estimated_cost:.8f}")
+        logger.info(f"  Fee: ${estimated_fee:.8f}")
+        logger.info(f"  Total: ${total_required:.8f}")
         
         return {
             'symbol': symbol,
-            'quantity': precise_quantity,
             'price': current_price,
-            'cost': exact_cost,
-            'total_cost': total_cost,
-            'specs': specs
+            'quantity': adjusted_quantity,
+            'cost': estimated_cost,
+            'fee': estimated_fee,
+            'total': total_required
         }
     
-    def find_executable_trade(self, balance: float) -> Optional[Dict]:
-        """Find trade that can be executed with current balance"""
-        logger.info(f"Finding executable trade for ${balance:.8f}")
+    def execute_precise_buy(self, order_params: dict) -> bool:
+        """Execute buy order with precise calculations"""
+        symbol = order_params['symbol']
+        quantity = order_params['quantity']
         
-        for symbol in self.precision_pairs:
-            trade = self.calculate_precise_trade(symbol, balance)
-            if trade:
-                logger.info(f"{symbol}: Executable - Cost ${trade['total_cost']:.6f}")
-                return trade
-            else:
-                logger.info(f"{symbol}: Not executable")
+        logger.info(f"Executing precise buy order for {symbol}")
         
-        return None
-    
-    def execute_precise_trade(self, trade: Dict) -> bool:
-        """Execute trade with precise parameters"""
-        symbol = trade['symbol']
-        quantity = trade['quantity']
-        cost = trade['cost']
-        
-        logger.info(f"Executing precise trade: {symbol}")
-        logger.info(f"Quantity: {quantity:.8f}")
-        logger.info(f"Cost: ${cost:.6f}")
-        
-        order = {
+        # Use limit order at current market price for better control
+        order_data = {
             "instId": symbol,
             "tdMode": "cash",
             "side": "buy",
-            "ordType": "market",
-            "sz": str(quantity)
+            "ordType": "limit",
+            "sz": str(quantity),
+            "px": str(order_params['price'])
         }
         
-        order_body = json.dumps(order)
-        response = self.make_request('POST', '/api/v5/trade/order', order_body)
+        order_body = json.dumps(order_data)
+        response = self.api_request('POST', '/api/v5/trade/order', order_body)
         
-        if response and response.get('code') == '0':
-            order_id = response['data'][0]['ordId']
+        if response and response.status_code == 200:
+            result = response.json()
+            if result.get('code') == '0':
+                order_id = result['data'][0]['ordId']
+                logger.info(f"✓ Buy order placed successfully: {order_id}")
+                
+                # Wait for fill
+                time.sleep(5)
+                
+                # Check order status
+                status_response = self.api_request('GET', f'/api/v5/trade/order?instId={symbol}&ordId={order_id}')
+                if status_response and status_response.status_code == 200:
+                    status_data = status_response.json()
+                    if status_data.get('code') == '0':
+                        order_status = status_data['data'][0]['state']
+                        logger.info(f"Order status: {order_status}")
+                        
+                        if order_status == 'filled':
+                            logger.info("✓ Buy order filled successfully")
+                            return True
+                        elif order_status == 'live':
+                            logger.info("Order still pending - may need price adjustment")
+                
+                # If not filled, cancel and try market order
+                cancel_data = {"instId": symbol, "ordId": order_id}
+                cancel_body = json.dumps(cancel_data)
+                self.api_request('POST', '/api/v5/trade/cancel-order', cancel_body)
+                
+                # Try market order as fallback
+                market_order_data = {
+                    "instId": symbol,
+                    "tdMode": "cash",
+                    "side": "buy",
+                    "ordType": "market",
+                    "sz": str(quantity)
+                }
+                
+                market_body = json.dumps(market_order_data)
+                market_response = self.api_request('POST', '/api/v5/trade/order', market_body)
+                
+                if market_response and market_response.status_code == 200:
+                    market_result = market_response.json()
+                    if market_result.get('code') == '0':
+                        logger.info("✓ Market order executed successfully")
+                        return True
             
-            self.execution_count += 1
-            self.last_execution = time.time()
+            logger.error(f"Order failed: {result.get('msg')}")
+            return False
+        
+        logger.error("Order request failed")
+        return False
+    
+    def find_optimal_trading_pair(self):
+        """Find the optimal trading pair for current balance"""
+        balance = self.get_balance()
+        
+        test_pairs = [
+            'MEME-USDT',   # Previously had lowest minimum
+            'NEIRO-USDT',  # Alternative low minimum
+            'SATS-USDT',   # Bitcoin ordinals
+            'CAT-USDT',    # Alternative option
+        ]
+        
+        for symbol in test_pairs:
+            order_params = self.calculate_precise_order_size(symbol, balance)
+            if order_params:
+                logger.info(f"✓ {symbol} is viable for precise trading")
+                return order_params
+            else:
+                logger.info(f"✗ {symbol} not viable with current balance")
+        
+        return None
+    
+    def execute_trading_strategy(self):
+        """Execute complete precision trading strategy"""
+        logger.info("EXECUTING PRECISION TRADING STRATEGY")
+        logger.info("=" * 50)
+        
+        # Find optimal pair
+        order_params = self.find_optimal_trading_pair()
+        if not order_params:
+            logger.error("No viable trading pairs found")
+            return False
+        
+        # Execute buy order
+        success = self.execute_precise_buy(order_params)
+        
+        if success:
+            logger.info("✓ PRECISION TRADING SUCCESSFUL")
             
-            logger.info("TRADE EXECUTED SUCCESSFULLY")
-            logger.info(f"Order ID: {order_id}")
-            logger.info(f"Execution count: {self.execution_count}")
-            
-            # Log new balance
-            new_balance = self.get_exact_balance()
-            logger.info(f"New balance: ${new_balance:.8f}")
+            # Check new balance
+            time.sleep(3)
+            new_balance = self.get_balance()
+            logger.info(f"Post-trade balance: ${new_balance:.8f}")
             
             return True
         else:
-            error_msg = response.get('msg', 'Unknown error') if response else 'Request failed'
-            logger.error(f"Trade execution failed: {error_msg}")
-            
-            if response and response.get('data'):
-                for error in response['data']:
-                    logger.error(f"Error {error.get('sCode')}: {error.get('sMsg')}")
-            
+            logger.error("❌ PRECISION TRADING FAILED")
             return False
-    
-    def run_single_execution(self) -> bool:
-        """Run single trade execution"""
-        logger.info("Running single precise trade execution")
-        
-        # Get current balance
-        balance = self.get_exact_balance()
-        if balance < 0.1:
-            logger.warning(f"Balance too low: ${balance:.8f}")
-            return False
-        
-        # Find executable trade
-        trade = self.find_executable_trade(balance)
-        if not trade:
-            logger.warning("No executable trades found")
-            return False
-        
-        # Execute the trade
-        success = self.execute_precise_trade(trade)
-        return success
-    
-    def start_continuous_execution(self):
-        """Start continuous autonomous execution"""
-        logger.info("Starting continuous precise trading")
-        
-        self.is_running = True
-        cycle = 0
-        
-        while self.is_running:
-            try:
-                cycle += 1
-                logger.info(f"EXECUTION CYCLE #{cycle}")
-                
-                # Execute trade
-                success = self.run_single_execution()
-                
-                if success:
-                    logger.info("Cycle completed successfully")
-                else:
-                    logger.warning("Cycle failed")
-                
-                # Wait 5 minutes between executions
-                logger.info("Waiting 300 seconds for next cycle...")
-                time.sleep(300)
-                
-            except KeyboardInterrupt:
-                logger.info("Continuous execution stopped")
-                break
-            except Exception as e:
-                logger.error(f"Cycle error: {e}")
-                time.sleep(60)
-    
-    def start_background_execution(self):
-        """Start execution in background thread"""
-        if self.is_running:
-            return
-        
-        thread = threading.Thread(target=self.start_continuous_execution, daemon=True)
-        thread.start()
-        logger.info("Background execution started")
-        return thread
 
-# Global instance
-precise_trader = None
-
-def initialize_precise_trader():
-    """Initialize precise trader"""
-    global precise_trader
-    if precise_trader is None:
-        precise_trader = PreciseBalanceTrader()
-        precise_trader.start_background_execution()
-    return precise_trader
+def main():
+    """Execute precision trading"""
+    trader = PreciseBalanceTrader()
+    success = trader.execute_trading_strategy()
+    
+    if success:
+        logger.info("Precision trading completed successfully")
+    else:
+        logger.info("Precision trading unsuccessful")
 
 if __name__ == "__main__":
-    trader = PreciseBalanceTrader()
-    trader.run_single_execution()
+    main()
