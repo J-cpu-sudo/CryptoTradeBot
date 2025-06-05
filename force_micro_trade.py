@@ -1,266 +1,161 @@
 #!/usr/bin/env python3
 """
-Force Micro Trade - Lower threshold autonomous trading for demonstration
+Force Micro Trade - Aggressive micro trading to maximize available balance utilization
 """
 import os
-import time
-import json
 import requests
+import json
 import hmac
 import hashlib
 import base64
-from datetime import datetime
-import threading
+from datetime import datetime, timezone
 
-class MicroTradingBot:
-    """Autonomous bot with lower thresholds to ensure trade execution"""
+def force_micro_trade():
+    api_key = str(os.environ.get('OKX_API_KEY', ''))
+    secret_key = str(os.environ.get('OKX_SECRET_KEY', ''))
+    passphrase = str(os.environ.get('OKX_PASSPHRASE', ''))
+    base_url = 'https://www.okx.com'
     
-    def __init__(self):
-        self.api_key = os.getenv('OKX_API_KEY')
-        self.secret_key = os.getenv('OKX_SECRET_KEY')
-        self.passphrase = os.getenv('OKX_PASSPHRASE')
-        self.base_url = 'https://www.okx.com'
-        
-        # Very low thresholds for demonstration
-        self.active_pairs = ['TRX-USDT', 'DOGE-USDT']
-        self.max_trade_amount = 1.0  # $1 trades
-        self.min_confidence = 0.40   # 40% confidence (very low)
-        
-        self.trades_executed = 0
-        self.running = False
-        
-        print("Micro Trading Bot - LOW THRESHOLD for guaranteed execution")
-        print(f"Trade size: ${self.max_trade_amount}")
-        print(f"Confidence threshold: {self.min_confidence*100}% (very low)")
-
-    def generate_signature(self, timestamp: str, method: str, request_path: str, body: str = '') -> str:
-        message = timestamp + method + request_path + body
-        mac = hmac.new(
-            bytes(self.secret_key or '', encoding='utf8'),
-            bytes(message, encoding='utf-8'),
-            digestmod=hashlib.sha256
-        )
-        return base64.b64encode(mac.digest()).decode()
-
-    def get_headers(self, method: str, request_path: str, body: str = '') -> dict:
-        timestamp = datetime.utcnow().isoformat()[:-3] + 'Z'
-        signature = self.generate_signature(timestamp, method, request_path, body)
+    def get_timestamp():
+        return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+    
+    def create_signature(timestamp, method, path, body=''):
+        message = timestamp + method + path + body
+        signature = hmac.new(
+            secret_key.encode('utf-8'),
+            message.encode('utf-8'),
+            hashlib.sha256
+        ).digest()
+        return base64.b64encode(signature).decode('utf-8')
+    
+    def get_headers(method, path, body=''):
+        timestamp = get_timestamp()
+        signature = create_signature(timestamp, method, path, body)
         
         return {
-            'OK-ACCESS-KEY': self.api_key or '',
+            'OK-ACCESS-KEY': api_key,
             'OK-ACCESS-SIGN': signature,
             'OK-ACCESS-TIMESTAMP': timestamp,
-            'OK-ACCESS-PASSPHRASE': self.passphrase or '',
+            'OK-ACCESS-PASSPHRASE': passphrase,
             'Content-Type': 'application/json'
         }
-
-    def get_balance(self) -> float:
-        try:
-            path = '/api/v5/account/balance'
-            headers = self.get_headers('GET', path)
-            
-            response = requests.get(self.base_url + path, headers=headers)
-            data = response.json()
-            
-            if data.get('code') == '0':
-                for detail in data['data'][0]['details']:
-                    if detail['ccy'] == 'USDT':
-                        return float(detail['availBal'])
-            return 0.0
-        except Exception as e:
-            print(f"Balance error: {e}")
-            return 0.0
-
-    def analyze_simple_opportunity(self, symbol: str) -> dict:
-        """Very simple analysis to ensure trade execution"""
+    
+    # Get balance
+    headers = get_headers('GET', '/api/v5/account/balance')
+    response = requests.get(base_url + '/api/v5/account/balance', headers=headers)
+    
+    if response.status_code != 200:
+        print("Failed to get balance")
+        return False
+    
+    data = response.json()
+    if data.get('code') != '0':
+        print(f"API Error: {data.get('msg')}")
+        return False
+    
+    usdt_balance = 0.0
+    for detail in data['data'][0]['details']:
+        if detail['ccy'] == 'USDT':
+            usdt_balance = float(detail['availBal'])
+            break
+    
+    print(f"Current USDT balance: ${usdt_balance:.8f}")
+    
+    # Check minimum tradeable pairs with very low requirements
+    micro_pairs = [
+        'RATS-USDT',  # Often has very low minimum
+        'ORDI-USDT',  # Bitcoin ecosystem token
+        'SATS-USDT',  # Satoshi token
+        'MEME-USDT',  # Meme token
+        'TURBO-USDT', # Another meme token
+        'PEPE-USDT',  # Popular meme
+        'BABYDOGE-USDT', # Micro cap
+        'X-USDT',     # Simple token
+        'NEIRO-USDT', # AI token
+        'WIF-USDT'    # Dogwifhat
+    ]
+    
+    print("Scanning for micro trading opportunities...")
+    
+    for symbol in micro_pairs:
         try:
             # Get ticker
-            ticker_response = requests.get(f'{self.base_url}/api/v5/market/ticker?instId={symbol}')
-            ticker_data = ticker_response.json()
-            
+            response = requests.get(f"{base_url}/api/v5/market/ticker?instId={symbol}")
+            if response.status_code != 200:
+                continue
+                
+            ticker_data = response.json()
             if not ticker_data.get('data'):
-                return {'action': 'hold', 'confidence': 0.0}
+                continue
+            
+            price = float(ticker_data['data'][0]['last'])
+            
+            # Get instrument info
+            response = requests.get(f"{base_url}/api/v5/public/instruments?instType=SPOT&instId={symbol}")
+            if response.status_code != 200:
+                continue
                 
-            ticker = ticker_data['data'][0]
-            change_24h = float(ticker.get('chg24h', '0'))
-            volume_24h = float(ticker['vol24h'])
-            price = float(ticker['last'])
+            inst_data = response.json()
+            if not inst_data.get('data'):
+                continue
             
-            # Very liberal scoring for guaranteed execution
-            confidence = 0.3  # Base confidence
-            signals = []
+            min_size = float(inst_data['data'][0]['minSz'])
+            min_usdt_required = min_size * price
             
-            # Any volume gets points
-            if volume_24h > 100000:
-                signals.append("Has volume")
-                confidence += 0.2
+            print(f"{symbol}: Price ${price:.8f}, Min ${min_usdt_required:.6f}")
             
-            # Any price movement gets points
-            if abs(change_24h) > 0.1:
-                signals.append("Price movement")
-                confidence += 0.1
-            
-            # Always give some baseline confidence for active markets
-            if volume_24h > 50000:
-                signals.append("Active market")
-                confidence += 0.1
-            
-            return {
-                'action': 'buy' if confidence >= self.min_confidence else 'hold',
-                'confidence': confidence,
-                'signals': signals,
-                'symbol': symbol,
-                'price': price
-            }
-            
-        except Exception as e:
-            print(f"Analysis error for {symbol}: {e}")
-            return {'action': 'hold', 'confidence': 0.0}
-
-    def execute_micro_trade(self, symbol: str, amount: float) -> bool:
-        """Execute a small trade"""
-        try:
-            # Get current price
-            ticker_response = requests.get(f'{self.base_url}/api/v5/market/ticker?instId={symbol}')
-            ticker_data = ticker_response.json()
-            
-            if not ticker_data.get('data'):
-                return False
+            # If we can trade this pair
+            if min_usdt_required <= usdt_balance * 0.98:  # Use 98% to account for fees
+                print(f"EXECUTING MICRO TRADE: {symbol}")
                 
-            current_price = float(ticker_data['data'][0]['last'])
-            quantity = amount / current_price
-            
-            # Get minimum order size
-            instrument_response = requests.get(f'{self.base_url}/api/v5/public/instruments?instType=SPOT&instId={symbol}')
-            if instrument_response.status_code == 200:
-                instrument_data = instrument_response.json()
-                if instrument_data.get('data'):
-                    instrument = instrument_data['data'][0]
-                    min_size = float(instrument.get('minSz', '0'))
-                    lot_size = float(instrument.get('lotSz', '0'))
-                    
-                    if lot_size > 0:
-                        quantity = round(quantity / lot_size) * lot_size
-                    
-                    if quantity < min_size:
-                        print(f"Quantity {quantity:.8f} below minimum {min_size}")
-                        return False
-            
-            # Place order
-            order_data = {
-                "instId": symbol,
-                "tdMode": "cash",
-                "side": "buy",
-                "ordType": "market",
-                "sz": str(quantity)
-            }
-            
-            path = '/api/v5/trade/order'
-            body = json.dumps(order_data)
-            headers = self.get_headers('POST', path, body)
-            
-            response = requests.post(self.base_url + path, headers=headers, data=body)
-            result = response.json()
-            
-            if result.get('code') == '0':
-                order_id = result['data'][0]['ordId']
-                self.trades_executed += 1
+                # Calculate exact quantity
+                usable_amount = usdt_balance * 0.95  # Leave 5% buffer
+                quantity = usable_amount / price
+                quantity = max(quantity, min_size)
                 
-                print(f"\nAUTONOMOUS TRADE EXECUTED: {symbol}")
-                print(f"Order ID: {order_id}")
-                print(f"Quantity: {quantity:.6f}")
-                print(f"Price: ${current_price:.6f}")
-                print(f"Value: ${amount:.2f}")
-                print(f"Time: {datetime.now().strftime('%H:%M:%S')}")
-                print(f"Total autonomous trades: {self.trades_executed}")
+                # Round to proper precision
+                quantity = round(quantity / min_size) * min_size
                 
-                return True
-            else:
-                error_msg = result.get('msg', 'Unknown error')
-                print(f"Trade failed: {error_msg}")
-                return False
+                print(f"Trade details:")
+                print(f"  Symbol: {symbol}")
+                print(f"  Quantity: {quantity:.8f}")
+                print(f"  Price: ${price:.8f}")
+                print(f"  Amount: ${quantity * price:.6f}")
                 
-        except Exception as e:
-            print(f"Trade execution error: {e}")
-            return False
-
-    def run_autonomous_cycle(self):
-        """Run one autonomous trading cycle with low threshold"""
-        print(f"\n--- Autonomous Cycle {datetime.now().strftime('%H:%M:%S')} ---")
-        
-        balance = self.get_balance()
-        print(f"Available USDT: ${balance:.2f}")
-        
-        if balance < 0.5:
-            print("Insufficient balance")
-            return False
-        
-        # Analyze pairs with low threshold
-        for symbol in self.active_pairs:
-            try:
-                analysis = self.analyze_simple_opportunity(symbol)
-                confidence = analysis.get('confidence', 0)
+                # Execute trade
+                order_data = {
+                    "instId": symbol,
+                    "tdMode": "cash",
+                    "side": "buy",
+                    "ordType": "market",
+                    "sz": str(quantity)
+                }
                 
-                print(f"{symbol}: {analysis['action']} (conf: {confidence:.2f})")
+                order_body = json.dumps(order_data)
+                headers = get_headers('POST', '/api/v5/trade/order', order_body)
+                response = requests.post(base_url + '/api/v5/trade/order', 
+                                       headers=headers, data=order_body)
                 
-                if analysis['action'] == 'buy' and confidence >= self.min_confidence:
-                    print(f"\nExecuting autonomous trade for {symbol}")
-                    print(f"Confidence: {confidence:.2f}")
-                    print(f"Signals: {', '.join(analysis.get('signals', []))}")
-                    
-                    trade_amount = min(self.max_trade_amount, balance - 0.1)
-                    
-                    if self.execute_micro_trade(symbol, trade_amount):
-                        print("AUTONOMOUS TRADE SUCCESSFUL")
+                if response.status_code == 200:
+                    result = response.json()
+                    if result.get('code') == '0':
+                        order_id = result['data'][0]['ordId']
+                        print(f"TRADE SUCCESSFUL!")
+                        print(f"Order ID: {order_id}")
                         return True
-                    
-            except Exception as e:
-                print(f"{symbol}: Error - {e}")
-        
-        print("No autonomous trades executed this cycle")
-        return False
-
-    def start_autonomous_trading(self, max_cycles=5):
-        """Start autonomous trading with limited cycles for demonstration"""
-        print("\n" + "="*60)
-        print("AUTONOMOUS MICRO TRADING - DEMONSTRATION MODE")
-        print("="*60)
-        print("Low threshold trading to demonstrate autonomous execution")
-        print(f"Will run {max_cycles} cycles maximum")
-        print("="*60)
-        
-        self.running = True
-        cycle_count = 0
-        trades_made = 0
-        
-        try:
-            while self.running and cycle_count < max_cycles:
-                cycle_count += 1
-                print(f"\n[Cycle {cycle_count}/{max_cycles}]")
+                    else:
+                        print(f"Trade failed: {result.get('msg')}")
+                else:
+                    print(f"HTTP Error: {response.status_code}")
                 
-                if self.run_autonomous_cycle():
-                    trades_made += 1
-                    print(f"Trades executed this session: {trades_made}")
-                    
-                    if trades_made >= 2:  # Stop after 2 autonomous trades
-                        print("\nDemonstration complete - 2 autonomous trades executed")
-                        break
-                
-                if cycle_count < max_cycles:
-                    print("Next cycle in 30 seconds...")
-                    time.sleep(30)
-                
-        except KeyboardInterrupt:
-            print("\nStopped by user")
-        finally:
-            self.running = False
-            print(f"\nSession complete:")
-            print(f"Cycles: {cycle_count}")
-            print(f"Autonomous trades: {trades_made}")
-
-def main():
-    bot = MicroTradingBot()
-    bot.start_autonomous_trading()
+        except Exception as e:
+            print(f"Error with {symbol}: {e}")
+            continue
+    
+    print("No micro trading opportunities found")
+    return False
 
 if __name__ == "__main__":
-    main()
+    print("Force Micro Trading System")
+    print("=" * 40)
+    force_micro_trade()
